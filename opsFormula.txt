@@ -1,0 +1,7 @@
+ar
+br
+cr
+abc*ac*/=
+aw
+bac+c*10+=
+wb

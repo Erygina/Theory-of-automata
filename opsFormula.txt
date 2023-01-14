@@ -1,7 +1,1 @@
-ar
-br
-cr
-abc*ac*/=
-aw
-bac+c*10+=
-wb
+arbrcrabc*ac*/=awbac+c*10+=wb

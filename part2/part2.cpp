@@ -1,4 +1,4 @@
-﻿#include <iostream>
+#include <iostream>
 #include <fstream>
 #include <string.h>
 #include <sstream>
@@ -2909,6 +2909,15 @@ void justdoit() {
             break;
         case 5:// w
             //read<<Magazin[j - 1]->value;
+            read.open("hello.txt.txt");
+            if (Magazin[tail]->type == 20) {//a -если это переменная
+                if (read.is_open()) {
+                    read << Magazin[tail]->type;
+                }
+            }
+            else cout << "ERROR";
+            tail = tail - 1;
+            j = j - 1;
             break;
         case 6:// i 
             cout << Magazin[j - 1]->value;
@@ -3329,7 +3338,6 @@ int main()
     p1 = head;
     head->next = nullptr;
     lexicalAnalyzer(C, i, *p1);
-    // cout << p1->type << " имя: " << p1->name << " значение: " << p1->value << endl;
     header = *p1;
 
     while (i < allSymb)
@@ -3341,28 +3349,9 @@ int main()
             cout << p1->next;
         }p1->next = nullptr;
         lexicalAnalyzer(C, i, *p1);
-        // cout << p2->type << " имя: " << p2->name << " значение : " << p2->value << endl;
+        
 
     }
-
-    p1 = head;
-    cout << p1->type << " имя: " << p1->name << " значение : " << p1->value << endl;
-    cout << p1->next;
-    while (p1->next != nullptr) {
-        p1 = p1->next;
-        cout << p1->type << " имя: " << p1->name << " значение : " << p1->value << endl;
-    }
-
-    /*
-    cout <<  endl;
-    cout <<  endl;
-    cout << header->type << endl;
-    header = header->next;
-    cout << header->type << endl;
-    header = header->next;
-    cout << header->type << endl;
-    header = header->next;
-    cout << header->type << endl;*/
 
 
     enter_file.close();
@@ -3393,23 +3382,20 @@ int main()
     p2g->prev = p1g;
     p1g = p2g;
 
-    lexem1* header1, * next;
-    header1 = new lexem1;
-    header1->type = 0;
-    next = new lexem1;
-    header1->next = next;
-    next->type = 1;
 
     pattern* mag1, * gen1, * gen2;
-    int k = 0;
-    while (k != 1) {
+    p1 = head;
+    int mas1[100][3];
+    string mas2[100];
+
+    while (p1->next != nullptr) {
         pattern mag;
         lexem1 input;
         mag = *p2m;
         //delete p2m;
         p2m = p2m->prev;
         p1m = p1m->prev;
-        input = *header1;
+        input = *head;
         //header = header->next;
         if (input.type != mag.type) {
             p2m = p1m;
@@ -3438,12 +3424,26 @@ int main()
             }
         }
         else {
-            header1 = header1->next;
+            head = head->next;
         }
         //убрать один элемент из генератора 
+        pattern generTale;
+        generTale = *p1g;
         p2g = p2g->prev;
         p1g = p1g->prev;
-        k++;
+        p1 = p1->next;
+
+        if (generTale.type == 1) {
+            
+        }
+        else {
+            if () {
+
+            }
+            else {
+
+            }
+        }
     }
 
     ///////////////////////////////////////////////////////////////////////////для интерпретатора

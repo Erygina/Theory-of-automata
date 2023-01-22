@@ -1,3612 +1,1492 @@
-﻿#include <iostream>
-#include <fstream>
-#include <string.h>
-#include <sstream>
+#pragma once
+#include <map>
+#include <stack>
+#include <vector>
+#include <string>
+#include <string>
+
 using namespace std;
 
-struct lexem1 {
-    int type;    //номер операции из таблицы
-    int value; // значение константы
-    string name; //имя переменной
-    int numLine;   //номер строки, в котором находится элемент (для ошибки)
-    lexem1* next;
-    lexem1* prev;
-};
-
-string mass[6] = {
-    "if", "while", "read", "write", "array", "int"
-};
-
-void lexicalAnalyzer(string C, int& i, lexem1& L) //i по ссылке
+struct debugInfo
 {
-    int state = 0;      //переменная состояния
-    string name;        //строка в которой текущяя лексема
-    int n, type = -1;        //n - число - константа, type - тип текущей лексемы
-    while (state < 7) {
-        // cout << C[i] << endl;
-        switch (C[i])
+    int line;
+    int pos;
+};
+
+struct InterpretException : public std::exception
+{
+    std::string msg;
+    const char* what() const throw () {
+        return msg.c_str();
+    }
+
+    InterpretException(std::string m, debugInfo i) {
+        m += "\nError found at line=" + std::to_string(i.line) + ", pos=" + std::to_string(i.pos) + "\n";
+        msg = m;
+    }
+};
+
+enum class lexemeType
+{
+	VarName, //имя (идентификатор переменной)
+	IntNum, //целое число без знака
+	IntType, //int
+	ArrayType,
+	If,
+	Else,
+	While,
+	Read,
+	Write,
+	Allocate, //new
+	LeftBrace, //{
+	RightBrace, //}
+	LeftSquareBracket, //[
+	RightSquareBracket, //]
+	LeftRoundBracket, //(
+	RightRoundBracket, //)
+	Plus,
+	Minus,
+	Multiply,
+	Divide,
+	Semicolon, //;
+	Comma,
+	Less, //<
+	Assign, //=
+	More, //>
+	Equal, //==
+	LessOrEqual, //<=
+	MoreOrEqual, //>=
+	NotEqual, //!=
+	Finish,
+	Error
+};
+
+struct lexeme
+{
+	lexemeType lexeme_type;
+	string value;
+	debugInfo info;
+};
+
+class Analyzer {
+public:
+	void Run();
+	vector<lexeme> GetData();
+	Analyzer(const string&);
+
+private:
+	lexeme NextLexeme();
+	bool ischar(char ch);
+
+	string program_text;
+	int current_index;
+	debugInfo current_info;
+	vector<lexeme> data;
+};
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////\\
+//Тип элемента в ОПС
+enum class OpsItemType {
+	IntVariable,
+	IntNumber,
+	Operation,
+	Error
+};
+//Операция элемента в ОПС
+enum class OpsItemOperation {
+	Read,
+	Write,
+	Plus,
+	Minus,
+	UnarMinus,
+	Miltiply,
+	Divide,
+	Less,
+	Assign,
+	More,
+	Equal,
+	LessOrEqual,
+	MoreOrEqual,
+	NotEqual,
+	Jump,
+	JumpIfFalse,
+	Index,
+	Memory,
+	Error
+};
+
+//Структура описывающая элемент ОПС
+struct OpsItem {
+	OpsItemType type = OpsItemType::Error; //Изначально тип элемента - ошибка
+	OpsItemOperation operation = OpsItemOperation::Error; // И операция тоже ошибка
+	string var_name;
+	int int_num = 0;
+	debugInfo info;
+	//Если у нас переменная в ОПС
+	OpsItem(string name, OpsItemType t, debugInfo i)
+	{
+		type = t;
+		var_name = name;
+		info = i;
+	}
+	//Если у нас операция в ОПС
+	OpsItem(OpsItemOperation op, debugInfo i)
+	{
+		type = OpsItemType::Operation;
+		operation = op;
+		info = i;
+	}
+	//Если у нас число в ОПС
+	OpsItem(int number, debugInfo i)
+	{
+		type = OpsItemType::IntNumber;
+		int_num = number;
+		info = i;
+	}
+};
+//Структура описывающая данных для интерпритатора (то что мы передадим интерпритатору ОПС)
+struct InterpretData
+{
+	vector<OpsItem> ops; //Вектор ОПС
+	map<string, int> int_table; //Таблица интов
+	map<string, vector<int>> massInt_table; //Таблица массивов
+};
+//Генератор ОПС
+class Generator {
+public:
+	void Run(); //Запускаем генератор ОПС
+	InterpretData GetData(); //Получаем данные от него
+	Generator(vector<lexeme>); //Передача генератору вектора лексем
+
+private:
+	void RecognizeNonterminal(); //Разложение нетерминалов
+	void DoTask(); //Выполнения действий
+	//Структура описывающая числа и массивы
+	enum class table {
+		Int, //числа
+		MassInt, //массивы
+	};
+
+	//Все возможные нетерминалы для распознования генератора
+	enum class Nonterminal {
+		S, // → intIS | arrayIS | aH=E;Q | read(aH);Q | write(E);Q | new(a, E);Q | if (C) {SQ} KZQ | while (C) {SQ} Q
+		Q, // → aH = E; Q | read(aH); Q | write(E); Q | new(a, E);Q | if (C) {SQ} KZQ |  while (C)  {SQ}Q | λ
+		A, // → aH = E; | read(aH); |  write(E); | new(a, E); | if (C) {SQ} KZ | while (C) {SQ}
+		I, // → aM
+		M, // → ,aM | ;
+		H, // → [E] | λ
+		C, // → (E)VUL | aHVUL | kVUL | +GVUL | -GVUL
+		L, // → <EZ | >EZ | == EZ | ≤EZ | ≥EZ | !=EZ
+		K, // → else {SQ} | λ
+		E, // → (E)VU | aHVU | +GVU | -GVU
+		U, // → +TU | -TU | λ
+		T, // → (E)V | aHV | kV | +GV | -GV
+		V, // → *FV | /FV | λ
+		F, // → +G | -GZ | (E) | aH | k
+		G, // → (E) | aH | k
+		Z, // → λ
+		Error // ошибочное состояние
+	};
+	//Все возможные действия (задания) генератора
+	enum class GeneratorTask
+	{
+		Empty,
+		VariableId,
+		IntNumber,
+		Read,
+		Write,
+		Plus,
+		Minus,
+		UnarMinus,
+		Multiply,
+		Divide,
+		Less,
+		Assign,
+		Memory,
+		More,
+		Equal,
+		LessOrEqual,
+		MoreOrEqual,
+		NotEqual,
+		Index,
+		Task1,
+		Task2,
+		Task3,
+		Task4,
+		Task5,
+		Task6,
+		Task7,
+		Task8,
+		Task9,
+		Task10,
+		Task11,
+	};
+	//Структура описывающая элемент магазина
+	struct MagazineItem
+	{
+		bool is_lexeme;
+		lexemeType lexeme;
+		Nonterminal nonterminal;
+		//Эл-т магазина - лексема
+		MagazineItem(lexemeType l) {
+			is_lexeme = true;
+			lexeme = l;
+			nonterminal = Nonterminal::Error;
+		}
+		//Эл-т магазина - не лексема
+		MagazineItem(Nonterminal s) {
+			is_lexeme = false;
+			lexeme = lexemeType::Error;
+			nonterminal = s;
+		}
+	};
+
+	//Создание экземпляров
+	GeneratorTask current_task; //Выбранное действие генератора
+	lexeme current_lexeme; //Выбранныя лекмсема
+	Nonterminal current_nonterminal; //Нетерминал
+	table current_table; //Выбранная таблица (переменных / массивов)
+	string last_array_name; //Последнее имя массива
+	stack<MagazineItem> magazine; //Магазин нетерминалов
+	stack<GeneratorTask> generator; //Генератор
+	stack<int> marks; //Стэк меок для действий генератора
+	InterpretData data; //Возвращаемые данные
+	vector<lexeme> input_data; //Вводимый вектор лексем
+};
+
+//Распознование не терминалов по средствам перехода по кейсам и последовательного разбора не терминала с помощью emplace
+//Эмитация всех возможных переходов по таблице с помощью типов лексем
+void Generator::RecognizeNonterminal() {
+    switch (current_nonterminal)
+    {
+    case Nonterminal::S:
+    {
+        switch (current_lexeme.lexeme_type)
         {
-        case '+':
-            switch (state)
-            {
-            case 0:                 //7
-                type = 3;
-                state = 7;
-                break;
-            case 1:                //3
-                state = 7;
-                i--;
-                break;
-            case 2:                //10
-                state = 7;
-                i--;
-                break;
-            case 3:                //13
-                cout << "1 Ошибка при лексическом анализе." << endl;
-                state = 8;
-                break;
-            case 4:                //13
-                cout << "2 Ошибка при лексическом анализе." << endl;
-                state = 8;
-                break;
-            case 5:                //13
-                cout << "3 Ошибка при лексическом анализе." << endl;
-                state = 8;
-                break;
-            case 6:                //13
-                cout << "4 Ошибка при лексическом анализе." << endl;
-                state = 8;
-                break;
-            }
+        case lexemeType::VarName:
+        {
+            magazine.emplace(Nonterminal::Q);
+            magazine.emplace(lexemeType::Semicolon);
+            magazine.emplace(Nonterminal::E);
+            magazine.emplace(lexemeType::Assign);
+            magazine.emplace(Nonterminal::H);
+            magazine.emplace(lexemeType::VarName);
 
-        case '-':
-            switch (state)
-            {
-            case 0:                 //7
-                type = 4;
-                state = 7;
-                break;
-            case 1:                //3
-                state = 7;
-                i--;
-                break;
-            case 2:                //10
-                state = 7;
-                i--;
-                break;
-            case 3:                //3
-                state = 7;
-                i--;
-                break;
-            case 4:                //3
-                state = 7;
-                i--;
-                break;
-            case 5:                //3
-                state = 7;
-                i--;
-                break;
-            case 6:                //3
-                state = 7;
-                i--;
-                break;
-            }
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Assign);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::VariableId);
+            break;
+        }
+        case lexemeType::IntType:
+        {
+            magazine.emplace(Nonterminal::S);
+            magazine.emplace(Nonterminal::I);
+            magazine.emplace(lexemeType::IntType);
 
-        case '/':
-            switch (state)
-            {
-            case 0:                 //7
-                type = 5;
-                state = 7;
-                break;
-            case 1:                //3
-                state = 7;
-                i--;
-                break;
-            case 2:                //10
-                state = 7;
-                i--;
-                break;
-            case 3:                //13
-                cout << "5 Ошибка при лексическом анализе." << endl;
-                state = 8;
-                break;
-            case 4:                //13
-                cout << "6 Ошибка при лексическом анализе." << endl;
-                state = 8;
-                break;
-            case 5:                //13
-                cout << "7 Ошибка при лексическом анализе." << endl;
-                state = 8;
-                break;
-            case 6:                //13
-                cout << "8 Ошибка при лексическом анализе." << endl;
-                state = 8;
-                break;
-            }
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Task6);
+            break;
+        }
+        case lexemeType::ArrayType:
+        {
+            magazine.emplace(Nonterminal::S);
+            magazine.emplace(Nonterminal::I);
+            magazine.emplace(lexemeType::ArrayType);
 
-        case '*':
-            switch (state)
-            {
-            case 0:                 //7
-                type = 6;
-                state = 7;
-                break;
-            case 1:                //3
-                state = 7;
-                i--;
-                break;
-            case 2:                //10
-                state = 7;
-                i--;
-                break;
-            case 3:                //13
-                cout << "9 Ошибка при лексическом анализе." << endl;
-                state = 8;
-                break;
-            case 4:                //13
-                cout << "10 Ошибка при лексическом анализе." << endl;
-                state = 8;
-                break;
-            case 5:                //13
-                cout << "11 Ошибка при лексическом анализе." << endl;
-                state = 8;
-                break;
-            case 6:                //13
-                cout << "12 Ошибка при лексическом анализе." << endl;
-                state = 8;
-                break;
-            }
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Task7);
+            break;
+        }
+        case lexemeType::If:
+        {
+            magazine.emplace(Nonterminal::Q);
+            magazine.emplace(Nonterminal::Z);
+            magazine.emplace(Nonterminal::K);
+            magazine.emplace(lexemeType::RightBrace);
+            magazine.emplace(Nonterminal::Q);
+            magazine.emplace(Nonterminal::S);
+            magazine.emplace(lexemeType::LeftBrace);
+            magazine.emplace(lexemeType::RightRoundBracket);
+            magazine.emplace(Nonterminal::C);
+            magazine.emplace(lexemeType::LeftRoundBracket);
+            magazine.emplace(lexemeType::If);
 
-        case '<':
-            switch (state)
-            {
-            case 0:                 //12
-                state = 4;
-                type = 7;
-                break;
-            case 1:                //3
-                state = 7;
-                i--;
-                break;
-            case 2:                //10
-                state = 7;
-                i--;
-                break;
-            case 3:                //13
-                cout << "13 Ошибка при лексическом анализе." << endl;
-                state = 8;
-                break;
-            case 4:                //13
-                cout << "14 Ошибка при лексическом анализе." << endl;
-                state = 8;
-                break;
-            case 5:                //13
-                cout << "15 Ошибка при лексическом анализе." << endl;
-                state = 8;
-                break;
-            case 6:                //13
-                cout << "16 Ошибка при лексическом анализе." << endl;
-                state = 8;
-                break;
-            }
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Task3);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Task1);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            break;
+        }
+        case lexemeType::While:
+        {
+            magazine.emplace(Nonterminal::Q);
+            magazine.emplace(lexemeType::RightBrace);
+            magazine.emplace(Nonterminal::Q);
+            magazine.emplace(Nonterminal::S);
+            magazine.emplace(lexemeType::LeftBrace);
+            magazine.emplace(lexemeType::RightRoundBracket);
+            magazine.emplace(Nonterminal::C);
+            magazine.emplace(lexemeType::LeftRoundBracket);
+            magazine.emplace(lexemeType::While);
 
-        case '>':
-            switch (state)
-            {
-            case 0:                 //12
-                state = 5;
-                type = 8;
-                break;
-            case 1:                //3
-                state = 7;
-                i--;
-                break;
-            case 2:                //10
-                state = 7;
-                i--;
-                break;
-            case 3:                //13
-                cout << "17 Ошибка при лексическом анализе." << endl;
-                state = 8;
-                break;
-            case 4:                //13
-                cout << "18 Ошибка при лексическом анализе." << endl;
-                state = 8;
-                break;
-            case 5:                //13
-                cout << "19 Ошибка при лексическом анализе." << endl;
-                state = 8;
-                break;
-            case 6:                //13
-                cout << "20 Ошибка при лексическом анализе." << endl;
-                state = 8;
-                break;
-            }
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Task5);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Task1);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Task4);
+            break;
+        }
+        case lexemeType::Read:
+        {
+            magazine.emplace(Nonterminal::Q);
+            magazine.emplace(lexemeType::Semicolon);
+            magazine.emplace(lexemeType::RightRoundBracket);
+            magazine.emplace(Nonterminal::H);
+            magazine.emplace(lexemeType::VarName);
+            magazine.emplace(lexemeType::LeftRoundBracket);
+            magazine.emplace(lexemeType::Read);
 
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Read);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::VariableId);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            break;
+        }
+        case lexemeType::Write:
+        {
+            magazine.emplace(Nonterminal::Q);
+            magazine.emplace(lexemeType::Semicolon);
+            magazine.emplace(lexemeType::RightRoundBracket);
+            magazine.emplace(Nonterminal::E);
+            magazine.emplace(lexemeType::LeftRoundBracket);
+            magazine.emplace(lexemeType::Write);
 
-        case '=':
-            switch (state)
-            {
-            case 0:                 //12
-                state = 3;
-                type = 2;
-                break;
-            case 1:                //3
-                state = 7;
-                i--;
-                break;
-            case 2:                //10
-                state = 7;
-                i--;
-                break;
-            case 3:                //6
-                type = 9;
-                state = 7;
-                break;
-            case 4:                //6
-                type = 10;
-                state = 7;
-                break;
-            case 5:                //6
-                type = 11;
-                state = 7;
-                break;
-            case 6:                //
-                type = 12;
-                state = 7;
-                break;
-            }
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Write);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            break;
+        }
+        case lexemeType::Allocate:
+        {
+            magazine.emplace(Nonterminal::Q);
+            magazine.emplace(lexemeType::Semicolon);
+            magazine.emplace(lexemeType::RightRoundBracket);
+            magazine.emplace(Nonterminal::E);
+            magazine.emplace(lexemeType::Comma);
+            magazine.emplace(lexemeType::VarName);
+            magazine.emplace(lexemeType::LeftRoundBracket);
+            magazine.emplace(lexemeType::Allocate);
 
-
-        case '!':
-            switch (state)
-            {
-            case 0:                 //12
-                state = 6;
-                break;
-            case 1:                //3
-                state = 7;
-                i--;
-                break;
-            case 2:                //10
-                state = 7;
-                i--;
-                break;
-            case 3:                //13
-                cout << "21 Ошибка при лексическом анализе." << endl;
-                state = 8;
-                break;
-            case 4:                //13
-                cout << "22 Ошибка при лексическом анализе." << endl;
-                state = 8;
-                break;
-            case 5:                //13
-                cout << "23 Ошибка при лексическом анализе." << endl;
-                state = 8;
-                break;
-            case 6:                //13
-                cout << "24 Ошибка при лексическом анализе." << endl;
-                state = 8;
-                break;
-            }
-
-
-        case '(':
-            switch (state)
-            {
-            case 0:                 //7
-                type = 13;
-                state = 7;
-                break;
-            case 1:                //3
-                state = 7;
-                i--;
-                break;
-            case 2:                //10
-                state = 7;
-                i--;
-                break;
-            case 3:                //3
-                state = 7;
-                i--;
-                break;
-            case 4:                //3
-                state = 7;
-                i--;
-                break;
-            case 5:                //3
-                state = 7;
-                i--;
-                break;
-            case 6:                //3
-                state = 7;
-                i--;
-                break;
-            }
-
-        case ')':
-            switch (state)
-            {
-            case 0:                 //7
-                type = 14;
-                state = 7;
-                break;
-            case 1:                //3
-                state = 7;
-                i--;
-                break;
-            case 2:                //10
-                state = 7;
-                i--;
-                break;
-            case 3:                //3
-                state = 7;
-                i--;
-                break;
-            case 4:                //3
-                state = 7;
-                i--;
-                break;
-            case 5:                //3
-                state = 7;
-                i--;
-                break;
-            case 6:                //3
-                state = 7;
-                i--;
-                break;
-            }
-
-        case '[':
-            switch (state)
-            {
-            case 0:                 //7
-                type = 15;
-                state = 7;
-                break;
-            case 1:                //3
-                state = 7;
-                i--;
-                break;
-            case 2:                //10
-                state = 7;
-                i--;
-                break;
-            case 3:                //13
-                cout << "25 Ошибка при лексическом анализе." << endl;
-                state = 8;
-                break;
-            case 4:                //13
-                cout << "26 Ошибка при лексическом анализе." << endl;
-                state = 8;
-                break;
-            case 5:                //13
-                cout << "27 Ошибка при лексическом анализе." << endl;
-                state = 8;
-                break;
-            case 6:                //13
-                cout << "28 Ошибка при лексическом анализе." << endl;
-                state = 8;
-                break;
-            }
-
-        case ']':
-            switch (state)
-            {
-            case 0:                 //7
-                type = 16;
-                state = 7;
-                break;
-            case 1:                //3
-                state = 7;
-                i--;
-                break;
-            case 2:                //10
-                state = 7;
-                i--;
-                break;
-            case 3:                //13
-                cout << "29 Ошибка при лексическом анализе." << endl;
-                state = 8;
-                break;
-            case 4:                //13
-                cout << "30 Ошибка при лексическом анализе." << endl;
-                state = 8;
-                break;
-            case 5:                //13
-                cout << "31 Ошибка при лексическом анализе." << endl;
-                state = 8;
-                break;
-            case 6:                //13
-                cout << "32 Ошибка при лексическом анализе." << endl;
-                state = 8;
-                break;
-            }
-
-        case '{':
-            switch (state)
-            {
-            case 0:                 //7
-                type = 17;
-                state = 7;
-                break;
-            case 1:                //3
-                state = 7;
-                i--;
-                break;
-            case 2:                //10
-                state = 7;
-                i--;
-                break;
-            case 3:                //13
-                cout << "33 Ошибка при лексическом анализе." << endl;
-                state = 8;
-                break;
-            case 4:                //13
-                cout << "34 Ошибка при лексическом анализе." << endl;
-                state = 8;
-                break;
-            case 5:                //13
-                cout << "35 Ошибка при лексическом анализе." << endl;
-                state = 8;
-                break;
-            case 6:                //13
-                cout << "36 Ошибка при лексическом анализе." << endl;
-                state = 8;
-                break;
-            }
-
-        case '}':
-            switch (state)
-            {
-            case 0:                 //7
-                type = 18;
-                state = 7;
-                break;
-            case 1:                //3
-                state = 7;
-                i--;
-                break;
-            case 2:                //10
-                state = 7;
-                i--;
-                break;
-            case 3:                //13
-                cout << "37 Ошибка при лексическом анализе." << endl;
-                state = 8;
-                break;
-            case 4:                //13
-                cout << "38 Ошибка при лексическом анализе." << endl;
-                state = 8;
-                break;
-            case 5:                //13
-                cout << "39 Ошибка при лексическом анализе." << endl;
-                state = 8;
-                break;
-            case 6:                //13
-                cout << "40 Ошибка при лексическом анализе." << endl;
-                state = 8;
-                break;
-            }
-
-        case ';':
-            switch (state)
-            {
-            case 0:                 //7
-                type = 19;
-                state = 7;
-                break;
-            case 1:                //3
-                state = 7;
-                i--;
-                break;
-            case 2:                //10
-                state = 7;
-                i--;
-                break;
-            case 3:                //13
-                cout << "41 Ошибка при лексическом анализе." << endl;
-                state = 8;
-                break;
-            case 4:                //13
-                cout << "42 Ошибка при лексическом анализе." << endl;
-                state = 8;
-                break;
-            case 5:                //13
-                cout << "43 Ошибка при лексическом анализе." << endl;
-                state = 8;
-                break;
-            case 6:                //13
-                cout << "44 Ошибка при лексическом анализе." << endl;
-                state = 8;
-                break;
-            }
-
-        case ' ':
-            switch (state)
-            {
-            case 0:                 //5
-                break;
-            case 1:                //4
-                state = 7;
-                break;
-            case 2:                //11
-                state = 7;
-                break;
-            case 3:                //4
-                state = 7;
-                break;
-            case 4:                //4
-                state = 7;
-                break;
-            case 5:                //4
-                state = 7;
-                break;
-            case 6:                //13
-                cout << "45 Ошибка при лексическом анализе." << endl;
-                state = 8;
-                break;
-            }
-
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Memory); // буква m
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::VariableId);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            break;
+        }
         default:
-            if ((C[i] >= 'a') and (C[i] <= 'z'))
-            {
-                switch (state)
-                {
-                case 0:                 //1
-                    name = C[i];
-                    state = 1;
-                    //cout << "маленькое имя" << name << endl;
-                    type = 0;
-                    break;
-                case 1:                //2
-                    state = 1;
-                    name += C[i];
-                    //cout << "большое имя" << name << endl;
-                    break;
-                case 2:                //13
-                    cout << "46) Ошибка при лексическом анализе." << endl;
-                    state = 8;
-                    break;
-                case 3:                //3
-                    i--;
-                    state = 7;
-                    break;
-                case 4:                //3
-                    i--;
-                    state = 7;
-                    break;
-                case 5:                //3
-                    i--;
-                    state = 7;
-                    break;
-                case 6:                //3
-                    i--;
-                    state = 7;
-                    break;
-                }
-            }
-            else if ((C[i] >= '0') and (C[i] <= '9'))
-            {
-                switch (state)
-                {
-                case 0:                 //8
-                    state = 2;
-                    n = (int)C[i] - 48;
-                    //cout << "первая цифра: " << n << endl;
-                    type = 1;
-                    break;
-                case 1:                //2
-                    state = 1;
-                    name += C[i];
-                    //cout << "большое имя" << name << endl;
-                    break;
-                case 2:                //9
-                    state = 2;
-                    n = n * 10 + (int)C[i] - 48;
-                    //cout << "другие цифры: " << n << endl;
-                    break;
-                case 3:                //3
-                    i--;
-                    state = 7;
-                    break;
-                case 4:                //3
-                    i--;
-                    state = 7;
-                    break;
-                case 5:                //3
-                    i--;
-                    state = 7;
-                    break;
-                case 6:                //3
-                    i--;
-                    state = 7;
-                    break;
-                }
-            }
-            else
-            {
-                //cout << "47) Ошибка при лексическом анализе. Недопустимый символ" << endl;
-                state = 8;
-            }
-
-        }
-        i++;
-    }
-
-    if (type == 0) {
-        for (int j = 0; j < 6; j++)
         {
-            if (name == mass[j]) {
-                type = j + 20;
-            }
+            //Ошибка если не нашлось нужного перехода по таблице
+            string msg = "Generator error - Unexpected lexeme;";
+            throw InterpretException(msg, current_lexeme.info);
         }
+        }
+        break;
     }
-    if (type >= 0) {
-
-    }
-    L.type = type;
-    if (type == 0) L.name = name;
-    if (type == 1) L.value = n;
-
-}
-
-
-
-
-
-
-
-/*
- на вход получаю список лексем, на выходе опс
-в коде то же самое, что в файле тюк тюк
-
-1. массив двумерный / трехмерный(таблица семантических действий)
-
-создать объекты, из которого будет состоять магазин, генератор - 4 новых типа данных
-(один на вход, скинула диана, для магазина у алины - переделать, генератор !!!!!!!и опс есть у алины)
-
-типы данных : для генератора на стр 6 отчета
-
-каждый элемент в генераторе должен содержать 1 тип(цифра из таблицы 6), если в нем 2 константа(значение константы)  
-или 3 переменная(ссылка на переменную появляется), адрес на предыдущий
-
-магазин - то же самое, только другие цифры
-
-1. записать в магазин(цифру - A - взять из таблицы семантических действий), применить правило - 
-переходим к таблице семантических действий
-сравнить не совпадает ли первый символ магазина с первым символом входа, если не равны, 
-то правило(из массива, который делаю я)
-
-*/
-
-
-struct pattern {
-    int type;    //номер операции из таблицы
-    int value; // значение константы или метки
-    int nom; //элемент массива S...
-    int numLine;
-    pattern* next;
-    pattern* prev;
-};
-
-
-pattern magazin[13][26];
-pattern generator[13][26];
-
-//двумерный массив, у которого список внутри ячейки
-
-void fillInMagazin() {
-    pattern a;
-    pattern* b;
-    pattern* c;
-
-    a.type = -1;
-    for (int i = 0; i < 13; i++)
-        for (int j = 0; j < 26; j++)
-            magazin[i][j] = a;
-
-    //объявление массива
-    //aH=SZ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 0;   //a
-    b = new pattern;
-    b->type = 36;    //H
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 2;  //=
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 30;  //S
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 37;  //Z
-    b->prev = c;
-    c = b;
-    magazin[1][0] = *c;
-
-    //aHVUD
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 0;   //a
-    b = new pattern;
-    b->type = 36;    //H
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 33;  //V
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 31;  //U
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 29;  //D
-    b->prev = c;
-    c = b;
-    magazin[2][0] = *c;
-
-    //aHVU
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 0;   //a
-    b = new pattern;
-    b->type = 36;    //H
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 33;  //V
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 31;  //U
-    b->prev = c;
-    c = b;
-    magazin[4][0] = *c;
-
-    //aHV
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 0;   //a
-    b = new pattern;
-    b->type = 36;    //H
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 33;  //V
-    b->prev = c;
-    c = b;
-    magazin[6][0] = *c;
-
-    //aH
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 0;   //a
-    b = new pattern;
-    b->type = 36;    //H
-    b->prev = c;
-    c = b;
-    magazin[8][0] = *c;
-
-    //aH
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 0;   //a
-    b = new pattern;
-    b->type = 36;    //H
-    b->prev = c;
-    c = b;
-    magazin[9][0] = *c;
-
-    //kVUD
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 1;   //k
-    b = new pattern;
-    b->type = 33;    //V
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 31;  //U
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 29;  //D
-    b->prev = c;
-    c = b;
-    magazin[2][1] = *c;
-
-    //kVU
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 1;   //k
-    b = new pattern;
-    b->type = 33;    //V
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 31;  //U
-    b->prev = c;
-    c = b;
-    magazin[4][1] = *c;
-
-    //kV
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 1;   //k
-    b = new pattern;
-    b->type = 33;    //V
-    b->prev = c;
-    c = b;
-    magazin[6][1] = *c;
-
-    //k
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 1;   //k
-    magazin[8][1] = *c;
-
-    //k
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 1;   //k
-    magazin[9][1] = *c;
-    
-    //+GVUD
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 3;   //+
-    b = new pattern;
-    b->type = 35;    //G
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 33;  //V
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 31;  //U
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 29;  //D
-    b->prev = c;
-    c = b;
-    magazin[2][3] = *c;
-
-    //+GVU
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 3;   //+
-    b = new pattern;
-    b->type = 35;    //G
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 33;  //V
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 31;  //U
-    b->prev = c;
-    c = b;
-    magazin[4][3] = *c;
-
-    //+TU
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 3;   //+
-    b = new pattern;
-    b->type = 32;    //T
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 31;  //U
-    b->prev = c;
-    c = b;
-    magazin[5][3] = *c;
-
-    //+GV
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 3;   //+
-    b = new pattern;
-    b->type = 35;    //G
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 33;  //V
-    b->prev = c;
-    c = b;
-    magazin[6][3] = *c;
-
-    //+G
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 3;   //+
-    b = new pattern;
-    b->type = 35;    //G
-    b->prev = c;
-    c = b;
-    magazin[8][3] = *c;
-
-    //-GVUD
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 4;   //-
-    b = new pattern;
-    b->type = 35;    //G
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 33;  //V
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 31;  //U
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 29;  //D
-    b->prev = c;
-    c = b;
-    magazin[2][4] = *c;
-
-    //-GPVU
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 4;   //-
-    b = new pattern;
-    b->type = 35;    //G
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 38;  //P
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 33;  //V
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 31;  //U
-    b->prev = c;
-    c = b;
-    magazin[4][4] = *c;
-
-    //-TU
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 4;   //-
-    b = new pattern;
-    b->type = 32;    //T
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 31;  //U
-    b->prev = c;
-    c = b;
-    magazin[5][4] = *c;
-
-    //-GPV
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 4;   //-
-    b = new pattern;
-    b->type = 35;    //G
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 38;  //P
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 33;  //V
-    b->prev = c;
-    c = b;
-    magazin[6][4] = *c;
-
-    //-GP
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 4;   //-
-    b = new pattern;
-    b->type = 35;    //G
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 38;  //P
-    b->prev = c;
-    c = b;
-    magazin[8][4] = *c;
-
-    // /FV
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 5;   //  /
-    b = new pattern;
-    b->type = 34;    //F
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 33;  //V
-    b->prev = c;
-    c = b;
-    magazin[7][5] = *c;
-
-    // *FV
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 6;   //  *
-    b = new pattern;
-    b->type = 34;    //F
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 33;  //V
-    b->prev = c;
-    c = b;
-    magazin[7][6] = *c;
-
-    // <SP
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 7;   //  <
-    b = new pattern;
-    b->type = 30;    //S
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 38;  //P
-    b->prev = c;
-    c = b;
-    magazin[3][7] = *c;
-
-    // >SP
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 8;   //  >
-    b = new pattern;
-    b->type = 30;    //S
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 38;  //P
-    b->prev = c;
-    c = b;
-    magazin[3][8] = *c;
-
-    // ==SP
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 9;   //  ==
-    b = new pattern;
-    b->type = 30;    //S
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 38;  //P
-    b->prev = c;
-    c = b;
-    magazin[3][9] = *c;
-
-    // <=SP
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 10;   //  <=
-    b = new pattern;
-    b->type = 30;    //S
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 38;  //P
-    b->prev = c;
-    c = b;
-    magazin[3][10] = *c;
-
-    // >=SP
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 11;   //  >=
-    b = new pattern;
-    b->type = 30;    //S
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 38;  //P
-    b->prev = c;
-    c = b;
-    magazin[3][11] = *c;
-
-    // !=SP
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 12;   //  !=
-    b = new pattern;
-    b->type = 30;    //S
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 38;  //P
-    b->prev = c;
-    c = b;
-    magazin[3][12] = *c;
-
-    //(S)VUD
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 13;   //(
-    b = new pattern;
-    b->type = 30;    //S
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 14;  //)
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 33;  //V
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 31;  //U
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 29;  //D
-    b->prev = c;
-    c = b;
-    magazin[2][13] = *c;
-
-    //(S)VU
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 13;   //(
-    b = new pattern;
-    b->type = 30;    //S
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 14;  //)
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 33;  //V
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 31;  //U
-    b->prev = c;
-    c = b;
-    magazin[4][13] = *c;
-
-    //(S)V
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 13;   //(
-    b = new pattern;
-    b->type = 30;    //S
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 14;  //)
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 33;  //V
-    b->prev = c;
-    c = b;
-    magazin[6][13] = *c;
-
-    //(S)
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 13;   //(
-    b = new pattern;
-    b->type = 30;    //S
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 14;  //)
-    b->prev = c;
-    c = b;
-    magazin[8][13] = *c;
-
-    //(S)
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 13;   //(
-    b = new pattern;
-    b->type = 30;    //S
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 14;  //)
-    b->prev = c;
-    c = b;
-    magazin[9][13] = *c;
-
-    //[S]
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 15;   //[
-    b = new pattern;
-    b->type = 30;    //S
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 16;  //]
-    b->prev = c;
-    c = b;
-    magazin[10][15] = *c;
-
-    //{B}
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 17;   //{
-    b = new pattern;
-    b->type = 27;    //B
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 18;  //}
-    b->prev = c;
-    c = b;
-    magazin[0][17] = *c;
-
-    //;B
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 19;   //;
-    b = new pattern;
-    b->type = 27;    //B
-    b->prev = c;
-    c = b;
-    magazin[11][19] = *c;
-
-    //if(C){BZ}
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 20;      //if
-    b = new pattern;
-    b->type = 13;    //(
-    b->prev = c;
-    c = b;  
-    b = new pattern;
-    b->type = 28;    //C
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 14;  //)
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 17;  //{
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 27;  //B
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 37;  //Z
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 18;  //}
-    b->prev = c;
-    c = b;
-    magazin[1][20] = *c;
-
-    //while(C){BZ}
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 21;      //while
-    b = new pattern;
-    b->type = 13;    //(
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 28;    //C
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 14;  //)
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 17;  //{
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 27;  //B
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 37;  //Z
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 18;  //}
-    b->prev = c;
-    c = b;
-    magazin[1][21] = *c;
-
-    //read(aH)Z
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 22;      //read
-    b = new pattern;
-    b->type = 13;    //(
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;    //a
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 36;    //H
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 14;  //)
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 37;  //Z
-    b->prev = c;
-    c = b;
-    magazin[1][22] = *c;
-
-    //write(S)Z
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 23;      //write
-    b = new pattern;
-    b->type = 13;    //(
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 30;    //S
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 14;  //)
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 37;  //Z
-    b->prev = c;
-    c = b;
-    magazin[1][23] = *c;
-
-    //arraya[k]A
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 24;      //array
-    b = new pattern;
-    b->type = 0;    //a
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 15;    //[
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 1;  //k
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 16;  //]
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 26;  //A
-    b->prev = c;
-    c = b;
-    magazin[0][24] = *c;
-
-    //intaA
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;      //int
-    b = new pattern;
-    b->type = 0;    //a
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 26;  //A
-    b->prev = c;
-    c = b;
-    magazin[0][25] = *c;
-}
-
-void fillInGenerator() {
-    pattern a;
-    pattern* b;
-    pattern* c;
-
-    a.type = -1;
-    for (int i = 0; i < 13; i++)
-        for (int j = 0; j < 26; j++)
-            generator[i][j] = a;
-
-    //объявление массива
-    //aH=SZ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 20;        //a
-    b = new pattern;
-    b->type = 0;        //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;       //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;       //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 26;      //=
-    b->prev = c;
-    generator[1][0] = *b;
-
-    //aHVUD
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 20;   //a
-    b = new pattern;
-    b->type = 0;    //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;  //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;  //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;  //ㅁ
-    b->prev = c;
-    c = b;
-    generator[2][0] = *c;
-
-    //aHVU
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 20;   //a
-    b = new pattern;
-    b->type = 0;    //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;  //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;  //ㅁ
-    b->prev = c;
-    c = b;
-    generator[4][0] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[5][0] = *c;
-
-    //aHV
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 20;   //a
-    b = new pattern;
-    b->type = 0;    //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;  //ㅁ
-    b->prev = c;
-    c = b;
-    generator[6][0] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[7][0] = *c;
-
-    //aH
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 20;   //a
-    b = new pattern;
-    b->type = 0;    //ㅁ
-    b->prev = c;
-    c = b;
-    generator[8][0] = *c;
-
-    //aH
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 20;   //a
-    b = new pattern;
-    b->type = 0;    //ㅁ
-    b->prev = c;
-    c = b;
-    generator[9][0] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[10][0] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[12][0] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[1][1] = *c;
-
-    //kVUD
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 21;   //k
-    b = new pattern;
-    b->type = 0;    //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;  //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;  //ㅁ
-    b->prev = c;
-    c = b;
-    generator[2][1] = *c;
-
-    //kVU
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 21;   //k
-    b = new pattern;
-    b->type = 0;    //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;  //ㅁ
-    b->prev = c;
-    c = b;
-    generator[4][1] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[5][1] = *c;
-
-    //kV
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 21;   //k
-    b = new pattern;
-    b->type = 0;    //ㅁ
-    b->prev = c;
-    c = b;
-    generator[6][1] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[7][1] = *c;
-
-    //k
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 21;   //k
-    generator[8][1] = *c;
-
-    //k
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 21;   //k
-    generator[9][1] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[10][1] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[12][1] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[1][2] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[5][2] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[7][2] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[10][2] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[12][2] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[1][3] = *c;
-
-    //+GVUD
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 0;   //ㅁ
-    b = new pattern;
-    b->type = 0;    //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;  //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;  //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;  //ㅁ
-    b->prev = c;
-    c = b;
-    generator[2][3] = *c;
-
-    //+GVU
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 0;   //ㅁ
-    b = new pattern;
-    b->type = 0;    //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;  //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;  //ㅁ
-    b->prev = c;
-    c = b;
-    generator[4][3] = *c;
-
-    //+TU
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 0;   //ㅁ
-    b = new pattern;
-    b->type = 0;    //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 9;  //+
-    b->prev = c;
-    c = b;
-    generator[5][3] = *c;
-
-    //+GV
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 0;   //ㅁ
-    b = new pattern;
-    b->type = 0;    //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;  //ㅁ
-    b->prev = c;
-    c = b;
-    generator[6][3] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[7][3] = *c;
-
-    //+G
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 0;   //ㅁ
-    b = new pattern;
-    b->type = 0;    //ㅁ
-    b->prev = c;
-    c = b;
-    generator[8][3] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[10][3] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[12][3] = *c;
-
-    //-GVUD
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 0;   //ㅁ
-    b = new pattern;
-    b->type = 0;    //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 13;  //-'
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;  //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;  //ㅁ
-    b->prev = c;
-    c = b;
-    generator[2][4] = *c;
-
-    //-GPVU
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 0;   //ㅁ
-    b = new pattern;
-    b->type = 0;    //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 13;  //-'
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;  //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;  //ㅁ
-    b->prev = c;
-    c = b;
-    generator[4][4] = *c;
-
-    //-TU
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 0;   //ㅁ
-    b = new pattern;
-    b->type = 0;    //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 10;  //-
-    b->prev = c;
-    c = b;
-    generator[5][4] = *c;
-
-    //-GPV
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 0;   //ㅁ
-    b = new pattern;
-    b->type = 0;    //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 13;  //-'
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;  //ㅁ
-    b->prev = c;
-    c = b;
-    generator[6][4] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[7][4] = *c;
-
-    //-GP
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 0;   //ㅁ
-    b = new pattern;
-    b->type = 0;    //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 13;  //-'
-    b->prev = c;
-    c = b;
-    generator[8][4] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[10][4] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[12][4] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[1][5] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[5][5] = *c;
-
-    // /FV
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 0;   //  ㅁ
-    b = new pattern;
-    b->type = 0;    //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 12;  //   /
-    b->prev = c;
-    c = b;
-    generator[7][5] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[10][5] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[12][5] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[1][6] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[5][6] = *c;
-
-    // *FV
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 0;   //  ㅁ
-    b = new pattern;
-    b->type = 0;    //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 1;  //*
-    b->prev = c;
-    c = b;
-    generator[7][6] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[10][6] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[12][6] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[1][7] = *c;
-
-    // <SP
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 0;   //ㅁ
-    b = new pattern;
-    b->type = 0;    //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 14;  //<
-    b->prev = c;
-    c = b;
-    generator[3][7] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[5][7] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[7][7] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[10][7] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[12][7] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[1][8] = *c;
-
-    // >SP
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 0;   //ㅁ
-    b = new pattern;
-    b->type = 0;    //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 15;  //>
-    b->prev = c;
-    c = b;
-    generator[3][8] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[5][8] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[7][8] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[10][8] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[12][8] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[1][9] = *c;
-
-    // ==SP
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 0;   //ㅁ
-    b = new pattern;
-    b->type = 0;    //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 18;  //==
-    b->prev = c;
-    c = b;
-    generator[3][9] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[5][9] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[7][9] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[10][9] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[12][9] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[1][10] = *c;
-
-    // <=SP
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 0;   //ㅁ
-    b = new pattern;
-    b->type = 0;    //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 16;  //<=
-    b->prev = c;
-    c = b;
-    generator[3][10] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[5][10] = *c;
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[7][10] = *c;
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[10][10] = *c;
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[12][10] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[1][11] = *c;
-
-    // >=SP
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 0;   //ㅁ
-    b = new pattern;
-    b->type = 0;    //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 17;  //>=
-    b->prev = c;
-    c = b;
-    generator[3][11] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[5][11] = *c;
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[7][11] = *c;
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[10][11] = *c;
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[12][11] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[1][12] = *c;
-
-    // !=SP
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 0;   //ㅁ
-    b = new pattern;
-    b->type = 0;    //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 19;  //!=
-    b->prev = c;
-    c = b;
-    generator[3][12] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[5][12] = *c;
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[7][12] = *c;
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[10][12] = *c;
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[12][12] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[1][13] = *c;
-
-    //(S)VUD
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 0;   //ㅁ
-    b = new pattern;
-    b->type = 0;    //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;  //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;  //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;  //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;  //ㅁ
-    b->prev = c;
-    c = b;
-    generator[2][13] = *c;
-
-    //(S)VU
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 0;   //ㅁ
-    b = new pattern;
-    b->type = 0;    //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;  //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;  //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;  //ㅁ
-    b->prev = c;
-    c = b;
-    generator[4][13] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[5][13] = *c;
-
-    //(S)V
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 0;   //ㅁ
-    b = new pattern;
-    b->type = 0;    //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;  //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;  //ㅁ
-    b->prev = c;
-    c = b;
-    generator[6][13] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[7][13] = *c;
-
-    //(S)
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 0;   //ㅁ
-    b = new pattern;
-    b->type = 0;    //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;  //ㅁ
-    b->prev = c;
-    c = b;
-    generator[8][13] = *c;
-
-    //(S)
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 0;   //ㅁ
-    b = new pattern;
-    b->type = 0;    //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;  //ㅁ
-    b->prev = c;
-    c = b;
-    generator[9][13] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[10][13] = *c;
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[12][13] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[1][14] = *c;
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[5][14] = *c;
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[10][14] = *c;
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[12][14] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[1][15] = *c;
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[5][15] = *c;
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[7][15] = *c;
-
-    //[S]
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 0;   //ㅁ
-    b = new pattern;
-    b->type = 0;    //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;  //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 24;  //i
-    b->prev = c;
-    c = b;
-    generator[10][15] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[12][15] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[1][16] = *c;
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[5][16] = *c;
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[7][16] = *c;
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[10][16] = *c;
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[12][16] = *c;
-
-    //{B}
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 27;   //9
-    b = new pattern;
-    b->type = 0;    //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 28;  //10
-    b->prev = c;
-    c = b;
-    generator[0][17] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[1][17] = *c;
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[5][17] = *c;
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[7][17] = *c;
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[10][17] = *c;
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[12][17] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[1][18] = *c;
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[5][18] = *c;
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[7][18] = *c;
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[10][18] = *c;
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[12][18] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[1][19] = *c;
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[5][19] = *c;
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[7][19] = *c;
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[10][19] = *c;
-
-    //[S]
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 0;   //ㅁ
-    b = new pattern;
-    b->type = 0;    //ㅁ
-    b->prev = c;
-    c = b;
-    generator[11][19] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[12][19] = *c;
-
-    //if(C){BZ}
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 0;      //ㅁ
-    b = new pattern;
-    b->type = 0;    //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;    //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;  //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 1;  //1
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;  //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;  //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;  //2
-    b->prev = c;
-    c = b;
-    generator[1][20] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[5][20] = *c;
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[7][20] = *c;
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[10][20] = *c;
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[12][20] = *c;
-
-    //while(C){BZ}
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 3;      //3
-    b = new pattern;
-    b->type = 0;    //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;    //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;  //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 1;  //1
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;  //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;  //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 4;  //4
-    b->prev = c;
-    c = b;
-    generator[1][21] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[5][21] = *c;
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[7][21] = *c;
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[10][21] = *c;
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[12][21] = *c;
-
-    //read(aH)Z
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 0;      //ㅁ
-    b = new pattern;
-    b->type = 0;    //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 20;    //a
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;    //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 22;  //r
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;  //ㅁ
-    b->prev = c;
-    c = b;
-    generator[1][22] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[5][22] = *c;
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[7][22] = *c;
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[10][22] = *c;
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[12][22] = *c;
-
-    //write(S)Z
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 0;      //ㅁ
-    b = new pattern;
-    b->type = 0;    //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;    //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 23;  //w
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;  //ㅁ
-    b->prev = c;
-    c = b;
-    generator[1][23] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[5][23] = *c;
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[7][23] = *c;
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[10][23] = *c;
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[12][23] = *c;
-
-    //arraya[k]A
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 5;      //5
-    b = new pattern;
-    b->type = 6;    //6
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;    //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 7;  //7
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;  //ㅁ
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;  //ㅁ
-    b->prev = c;
-    c = b;
-    generator[0][24] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[5][24] = *c;
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[7][24] = *c;
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[10][24] = *c;
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[12][24] = *c;
-
-    //intaA
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 8;      //8
-    b = new pattern;
-    b->type = 6;    //6
-    b->prev = c;
-    c = b;
-    b = new pattern;
-    b->type = 0;  //ㅁ
-    b->prev = c;
-    c = b;
-    generator[0][25] = *c;
-
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[5][25] = *c;
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[7][25] = *c;
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[10][25] = *c;
-    //λ
-    c = new pattern;
-    c->prev = nullptr;
-    c->type = 25;   //λ
-    generator[12][25] = *c;
-}
-
-
-void output(pattern* p2m, pattern* p2g) {
-    //для магазина
-    pattern* help;
-    /*help = &magazin[1][0];
-    cout << help->type << " ";
-    help = help->prev;
-    cout << help->type << " ";
-    help = help->prev;
-    cout << help->type << " ";
-    help = help->prev;
-    cout << help->type << " ";
-    help = help->prev;
-    cout << help->type << " ";
-    help = help->prev;*/
-
-    //cout << magazin[1][0].type;
-
-   /* help = &magazin[1][0];
-    do {
-        cout << help->type << " ";
-        help = help->prev;
-    } while (help != nullptr);*/
-
-    /*for (int i = 0; i < 13; i++) 
-        for (int j = 0; j < 26; j++) {
-            cout << i << j;
-            help = &magazin[i][j];
-            while (help != nullptr) {
-                cout << help->type << " ";
-                help = help->prev;
-            }
-            
-        }*/
-
-    cout << "Магазин";
-    do {
-        cout << p2m->type << " ";
-        p2m = p2m->prev;
-    } while (p2m != nullptr);
-
-    cout << "Генератор";    
-}
-
-
-//для инетпретатора
-fstream read("hello.txt"); // окрываем файл для чтения
-
-//a=a+b aab+=
-//a=a+b+c aabc++=
-pattern* M[2]; //OPS
-pattern* Magazin[2];
-int S[2];
-int Metka[2];
-int j = 0;
-string help;
-void justdoit() {
-    int tail = 0;
-    for (int i = 0; i < 2; i++) {
-        while (M[i]->type > 19) {//до 19 номера в таблице на стр 7 идут операции
-            Magazin[j]->value = M[i]->value;//считали в магазин константы/переменные из опс
-            Magazin[j]->type = M[i]->type;
-            Magazin[j]->nom = M[i]->nom;
-            j++;
-            i++;
-        }//вышли, если пришла операция
-        tail = j - 1;
-        switch (M[i]->type)
+    case Nonterminal::Q:
+    {
+        switch (current_lexeme.lexeme_type)
         {
-        case 3:// =
-            if (Magazin[tail - 1]->type == 20) {//a -если это переменная
-                if (Magazin[tail]->type == 20) {
-                    S[Magazin[tail - 1]->nom] = S[Magazin[tail]->nom];
-                    Magazin[tail - 1]->value = S[Magazin[tail - 1]->nom];
-                }
-                else {
-                    S[Magazin[tail - 1]->nom] = Magazin[tail]->value;
-                    Magazin[tail - 1]->value = Magazin[tail]->value;
-                }
-            }
-            else Magazin[tail - 1]->value = Magazin[tail]->value;
-            tail = tail - 1;
-            j = j - 1;
-            //cout << Magazin[j - 2]->value << 2222<<endl;
-            break;
-        case 4:// r
-            //read >> Magazin[j - 1]->value;
-            read.open("hello.txt.txt");
-            if (Magazin[tail]->type == 20) {//a -если это переменная
-                if (read.is_open()) {
-                    read >> help;
-                }
-                S[Magazin[tail]->nom] = stoi(help);
-                Magazin[tail - 1]->value = S[Magazin[tail]->nom];
-            }
-            else cout << "ERROR";
-            tail = tail - 1;
-            j = j - 1;
-            break;
-        case 5:// w
-            //read<<Magazin[j - 1]->value;
-            break;
-        case 6:// i 
-            cout << Magazin[j - 1]->value;
-            break;
-        case 7:// j
-            i = i + Metka[Magazin[tail]->nom];//счетчику, который содержит текущий номер исполняемого элемента ОПС, присваивается значение метки
+        case lexemeType::VarName:
+        {
+            magazine.emplace(Nonterminal::Q);
+            magazine.emplace(lexemeType::Semicolon);
+            magazine.emplace(Nonterminal::E);
+            magazine.emplace(lexemeType::Assign);
+            magazine.emplace(Nonterminal::H);
+            magazine.emplace(lexemeType::VarName);
 
-            break;
-        case 8:// jf
-            if (Magazin[tail - 1]->type == 24) {//если false
-                i = i + Metka[Magazin[tail]->nom]; //счетчику, который содержит текущий номер исполняемого элемента ОПС, присваивается значение 2-го операнда 
-                cout << "m1";
-                cout << "  Magazin[tail]->value " << Magazin[tail]->value << endl << endl;
-                cout << "  Metka[Magazin[tail]->value] " << Metka[Magazin[tail]->nom] << endl << endl;
-                cout << "  i" << i << endl << endl;
-            }
-            cout << "  i" << i << endl << endl;
-            cout << "  j" << j << endl << endl;
-            j = j + 1;
-            tail = j - 1;
-            break;
-        case 9://+
-            if (Magazin[tail - 1]->type == 20) {//a -если это переменная
-                if (Magazin[tail]->type == 20) {
-                    S[Magazin[tail - 1]->nom] = S[Magazin[tail - 1]->nom] + S[Magazin[tail]->nom];
-                }
-                else {
-                    S[Magazin[tail - 1]->nom] = S[Magazin[tail - 1]->nom] + Magazin[tail]->value;
-                }
-                Magazin[tail - 1]->value = S[Magazin[tail - 1]->nom];
-            }
-            else {
-                Magazin[tail - 1]->value = Magazin[tail - 1]->value + Magazin[tail]->value;
-            }
-            Magazin[tail - 1]->type = 21;
-            Magazin[tail - 1]->nom = -1;
-            //cout << Magazin[tail - 1]->value << "magaz" << endl;
-            cout << "  i" << i << endl << endl;
-            cout << "  j" << j << endl << endl;
-            j = j - 1;
-            tail = tail - 1;
-            //cout << tail << "tail1";
-            break;
-        case 10://-
-            if (Magazin[tail - 1]->type == 20) {//a -если это переменная
-                if (Magazin[tail]->type == 20) {
-                    S[Magazin[tail - 1]->nom] = S[Magazin[tail - 1]->nom] - S[Magazin[tail]->nom];
-                }
-                else {
-                    S[Magazin[tail - 1]->nom] = S[Magazin[tail - 1]->nom] - Magazin[tail]->value;
-                }
-                Magazin[tail - 1]->value = S[Magazin[tail - 1]->nom];
-            }
-            else {
-                Magazin[tail - 1]->value = Magazin[tail - 1]->value - Magazin[tail]->value;
-            }
-            Magazin[tail - 1]->type = 21;
-            Magazin[tail - 1]->nom = -1;
-            j = j - 1;
-            tail = tail - 1;
-            break;
-        case 11://*
-            if (Magazin[tail - 1]->type == 20) {//a -если это переменная
-                if (Magazin[tail]->type == 20) {
-                    S[Magazin[tail - 1]->nom] = S[Magazin[tail - 1]->nom] * S[Magazin[tail]->nom];
-                }
-                else {
-                    S[Magazin[tail - 1]->nom] = S[Magazin[tail - 1]->nom] * Magazin[tail]->value;
-                }
-                Magazin[tail - 1]->value = S[Magazin[tail - 1]->nom];
-            }
-            else {
-                Magazin[tail - 1]->value = Magazin[tail - 1]->value * Magazin[tail]->value;
-            }
-            Magazin[tail - 1]->type = 21;
-            Magazin[tail - 1]->nom = -1;
-            j = j - 1;
-            tail = tail - 1;
-            break;
-        case 12:// :
-            if (Magazin[tail - 1]->type == 20) {//a -если это переменная
-                if (Magazin[tail]->type == 20) {
-                    S[Magazin[tail - 1]->nom] = S[Magazin[tail - 1]->nom] / S[Magazin[tail]->nom];
-                }
-                else {
-                    S[Magazin[tail - 1]->nom] = S[Magazin[tail - 1]->nom] / Magazin[tail]->value;
-                    cout << "  S[Magazin[tail - 1]->nom]" << S[Magazin[tail - 1]->nom] << endl << endl;
-                    cout << "  tail" << tail << endl << endl;
-                    cout << "  i" << i << endl << endl;
-                    cout << "  j" << j << endl << endl;
-                }
-                Magazin[tail - 1]->value = S[Magazin[tail - 1]->nom];
-            }
-            else {
-                Magazin[tail - 1]->value = Magazin[tail - 1]->value / Magazin[tail]->value;
-            }
-            Magazin[tail - 1]->type = 21;
-            Magazin[tail - 1]->nom = -1;
-            j = j - 1;
-            tail = tail - 1;
-            cout << "  :tail" << tail << endl;
-            cout << "  :i" << i << endl;
-            cout << "  j" << j << endl << endl;
-            break;
-        case 13:// '-
-            if (Magazin[tail - 1]->type == 20) {//a -если это переменная
-                S[Magazin[tail - 1]->nom] = S[Magazin[tail - 1]->nom] * (-1);
-            }
-            else {
-                Magazin[tail - 1]->value = Magazin[tail - 1]->value * (-1);
-            }
-            Magazin[tail - 1]->type = 21;
-            Magazin[tail - 1]->nom = -1;
-            j = j - 1;
-            tail = tail - 1;
-
-            break;
-        case 14:// <
-            /*if (Magazin[j - 2]->value < Magazin[j - 1]->value){//a<b
-                Magazin[j - 2]->type = 23; //записываем true в магазин
-                Magazin[j - 2]->value = 1;
-            }
-            else {
-                Magazin[j - 2]->type = 24;//если false
-                Magazin[j - 2]->value = 0;
-            }
-            j = j - 2;*/
-            if (Magazin[tail - 1]->type == 20) {//a -если это переменная
-                if (Magazin[tail]->type == 20) {
-                    if (S[Magazin[tail - 1]->nom] < S[Magazin[tail]->nom]) {
-                        Magazin[tail - 1]->type = 23;//записываем true в магазин
-                        Magazin[tail - 1]->nom = -1;
-                        //cout << "true" << endl << endl;
-                    }
-                    else {
-                        Magazin[tail - 1]->type = 24;//если false
-                        Magazin[tail - 1]->nom = -1;
-                    }
-                }
-                else {
-                    if (S[Magazin[tail - 1]->nom] < Magazin[tail]->nom) {
-                        Magazin[tail - 1]->type = 23;//записываем true в магазин
-                        Magazin[tail - 1]->nom = -1;
-                    }
-                    else {
-                        Magazin[tail - 1]->type = 24;//если false
-                        Magazin[tail - 1]->nom = -1;
-                    }
-                }
-                Magazin[tail - 1]->value = S[Magazin[tail - 1]->nom];
-            }
-            else {
-                if (Magazin[tail - 1]->nom < Magazin[tail]->nom) {
-                    Magazin[tail - 1]->type = 23;//записываем true в магазин
-                    Magazin[tail - 1]->nom = -1;
-                }
-                else {
-                    Magazin[tail - 1]->type = 24;//если false
-                    Magazin[tail - 1]->nom = -1;
-                }
-            }
-            cout << "  i<" << j << endl << endl;
-            cout << "  j<" << j << endl << endl;
-            //j = j - 1;
-            //tail = tail - 1;
-            break;
-        case 15:// >
-            /*if (Magazin[j - 2]->value > Magazin[j - 1]->value) {//a<b
-                Magazin[j - 2]->type = 23; //записываем true в магазин
-                Magazin[j - 2]->value = 1;
-            }
-            else {
-                Magazin[j - 2]->type = 24;//если false
-                Magazin[j - 2]->value = 0;
-            }
-            j = j - 2;*/
-            if (Magazin[tail - 1]->type == 20) {//a -если это переменная
-                if (Magazin[tail]->type == 20) {
-                    if (S[Magazin[tail - 1]->nom] > S[Magazin[tail]->nom]) {
-                        Magazin[tail - 1]->type = 23;//записываем true в магазин
-                        Magazin[tail - 1]->nom = -1;
-                    }
-                    else {
-                        Magazin[tail - 1]->type = 24;//если false
-                        Magazin[tail - 1]->nom = -1;
-                    }
-                }
-                else {
-                    if (S[Magazin[tail - 1]->nom] > Magazin[tail]->nom) {
-                        Magazin[tail - 1]->type = 23;//записываем true в магазин
-                        Magazin[tail - 1]->nom = -1;
-                    }
-                    else {
-                        Magazin[tail - 1]->type = 24;//если false
-                        Magazin[tail - 1]->nom = -1;
-                    }
-                }
-                Magazin[tail - 1]->value = S[Magazin[tail - 1]->nom];
-            }
-            else {
-                if (Magazin[tail - 1]->nom > Magazin[tail]->nom) {
-                    Magazin[tail - 1]->type = 23;//записываем true в магазин
-                    Magazin[tail - 1]->nom = -1;
-                }
-                else {
-                    Magazin[tail - 1]->type = 24;//если false
-                    Magazin[tail - 1]->nom = -1;
-                }
-            }
-            j = j - 1;
-            tail = tail - 1;
-            break;
-        case 16:// <=
-            if (Magazin[tail - 1]->type == 20) {//a -если это переменная
-                if (Magazin[tail]->type == 20) {
-                    if (S[Magazin[tail - 1]->nom] <= S[Magazin[tail]->nom]) {
-                        Magazin[tail - 1]->type = 23;//записываем true в магазин
-                        Magazin[tail - 1]->nom = -1;
-                    }
-                    else {
-                        Magazin[tail - 1]->type = 24;//если false
-                        Magazin[tail - 1]->nom = -1;
-                    }
-                }
-                else {
-                    if (S[Magazin[tail - 1]->nom] <= Magazin[tail]->nom) {
-                        Magazin[tail - 1]->type = 23;//записываем true в магазин
-                        Magazin[tail - 1]->nom = -1;
-                    }
-                    else {
-                        Magazin[tail - 1]->type = 24;//если false
-                        Magazin[tail - 1]->nom = -1;
-                    }
-                }
-                Magazin[tail - 1]->value = S[Magazin[tail - 1]->nom];
-            }
-            else {
-                if (Magazin[tail - 1]->nom <= Magazin[tail]->nom) {
-                    Magazin[tail - 1]->type = 23;//записываем true в магазин
-                    Magazin[tail - 1]->nom = -1;
-                }
-                else {
-                    Magazin[tail - 1]->type = 24;//если false
-                    Magazin[tail - 1]->nom = -1;
-                }
-            }
-            j = j - 1;
-            tail = tail - 1;
-            break;
-        case 17:// >=
-            /*if (Magazin[j - 2]->value >= Magazin[j - 1]->value) {//a<b
-                Magazin[j - 2]->type = 23; //записываем true в магазин
-                Magazin[j - 2]->value = 1;
-            }
-            else {
-                Magazin[j - 2]->type = 24;//если false
-                Magazin[j - 2]->value = 0;
-            }
-            j = j - 2;*/
-            if (Magazin[tail - 1]->type == 20) {//a -если это переменная
-                if (Magazin[tail]->type == 20) {
-                    if (S[Magazin[tail - 1]->nom] >= S[Magazin[tail]->nom]) {
-                        Magazin[tail - 1]->type = 23;//записываем true в магазин
-                        Magazin[tail - 1]->nom = -1;
-                    }
-                    else {
-                        Magazin[tail - 1]->type = 24;//если false
-                        Magazin[tail - 1]->nom = -1;
-                    }
-                }
-                else {
-                    if (S[Magazin[tail - 1]->nom] >= Magazin[tail]->nom) {
-                        Magazin[tail - 1]->type = 23;//записываем true в магазин
-                        Magazin[tail - 1]->nom = -1;
-                    }
-                    else {
-                        Magazin[tail - 1]->type = 24;//если false
-                        Magazin[tail - 1]->nom = -1;
-                    }
-                }
-                Magazin[tail - 1]->value = S[Magazin[tail - 1]->nom];
-            }
-            else {
-                if (Magazin[tail - 1]->nom >= Magazin[tail]->nom) {
-                    Magazin[tail - 1]->type = 23;//записываем true в магазин
-                    Magazin[tail - 1]->nom = -1;
-                }
-                else {
-                    Magazin[tail - 1]->type = 24;//если false
-                    Magazin[tail - 1]->nom = -1;
-                }
-            }
-            j = j - 1;
-            tail = tail - 1;
-            break;
-        case 18:// ==
-            if (Magazin[tail - 1]->type == 20) {//a -если это переменная
-                if (Magazin[tail]->type == 20) {
-                    if (S[Magazin[tail - 1]->nom] == S[Magazin[tail]->nom]) {
-                        Magazin[tail - 1]->type = 23;//записываем true в магазин
-                        Magazin[tail - 1]->nom = -1;
-                    }
-                    else {
-                        Magazin[tail - 1]->type = 24;//если false
-                        Magazin[tail - 1]->nom = -1;
-                    }
-                }
-                else {
-                    if (S[Magazin[tail - 1]->nom] == Magazin[tail]->nom) {
-                        Magazin[tail - 1]->type = 23;//записываем true в магазин
-                        Magazin[tail - 1]->nom = -1;
-                    }
-                    else {
-                        Magazin[tail - 1]->type = 24;//если false
-                        Magazin[tail - 1]->nom = -1;
-                    }
-                }
-                Magazin[tail - 1]->value = S[Magazin[tail - 1]->nom];
-            }
-            else {
-                if (Magazin[tail - 1]->nom == Magazin[tail]->nom) {
-                    Magazin[tail - 1]->type = 23;//записываем true в магазин
-                    Magazin[tail - 1]->nom = -1;
-                }
-                else {
-                    Magazin[tail - 1]->type = 24;//если false
-                    Magazin[tail - 1]->nom = -1;
-                }
-            }
-            j = j - 1;
-            tail = tail - 1;
-            break;
-        case 19:// !=
-            if (Magazin[tail - 1]->type == 20) {//a -если это переменная
-                if (Magazin[tail]->type == 20) {
-                    if (S[Magazin[tail - 1]->nom] != S[Magazin[tail]->nom]) {
-                        Magazin[tail - 1]->type = 23;//записываем true в магазин
-                        Magazin[tail - 1]->nom = -1;
-                    }
-                    else {
-                        Magazin[tail - 1]->type = 24;//если false
-                        Magazin[tail - 1]->nom = -1;
-                    }
-                }
-                else {
-                    if (S[Magazin[tail - 1]->nom] != Magazin[tail]->nom) {
-                        Magazin[tail - 1]->type = 23;//записываем true в магазин
-                        Magazin[tail - 1]->nom = -1;
-                    }
-                    else {
-                        Magazin[tail - 1]->type = 24;//если false
-                        Magazin[tail - 1]->nom = -1;
-                    }
-                }
-                Magazin[tail - 1]->value = S[Magazin[tail - 1]->nom];
-            }
-            else {
-                if (Magazin[tail - 1]->nom != Magazin[tail]->nom) {
-                    Magazin[tail - 1]->type = 23;//записываем true в магазин
-                    Magazin[tail - 1]->nom = -1;
-                }
-                else {
-                    Magazin[tail - 1]->type = 24;//если false
-                    Magazin[tail - 1]->nom = -1;
-                }
-            }
-            j = j - 1;
-            tail = tail - 1;
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Assign);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::VariableId);
             break;
         }
+        case lexemeType::If:
+        {
+            magazine.emplace(Nonterminal::Q);
+            magazine.emplace(Nonterminal::Z);
+            magazine.emplace(Nonterminal::K);
+            magazine.emplace(lexemeType::RightBrace);
+            magazine.emplace(Nonterminal::Q);
+            magazine.emplace(Nonterminal::S);
+            magazine.emplace(lexemeType::LeftBrace);
+            magazine.emplace(lexemeType::RightRoundBracket);
+            magazine.emplace(Nonterminal::C);
+            magazine.emplace(lexemeType::LeftRoundBracket);
+            magazine.emplace(lexemeType::If);
+
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Task3);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Task1);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            break;
+        }
+        case lexemeType::While:
+        {
+            magazine.emplace(Nonterminal::Q);
+            magazine.emplace(lexemeType::RightBrace);
+            magazine.emplace(Nonterminal::Q);
+            magazine.emplace(Nonterminal::S);
+            magazine.emplace(lexemeType::LeftBrace);
+            magazine.emplace(lexemeType::RightRoundBracket);
+            magazine.emplace(Nonterminal::C);
+            magazine.emplace(lexemeType::LeftRoundBracket);
+            magazine.emplace(lexemeType::While);
+
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Task5);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Task1);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Task4);
+            break;
+        }
+        case lexemeType::Read:
+        {
+            magazine.emplace(Nonterminal::Q);
+            magazine.emplace(lexemeType::Semicolon);
+            magazine.emplace(lexemeType::RightRoundBracket);
+            magazine.emplace(Nonterminal::H);
+            magazine.emplace(lexemeType::VarName);
+            magazine.emplace(lexemeType::LeftRoundBracket);
+            magazine.emplace(lexemeType::Read);
+
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Read);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::VariableId);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            break;
+        }
+        case lexemeType::Write:
+        {
+            magazine.emplace(Nonterminal::Q);
+            magazine.emplace(lexemeType::Semicolon);
+            magazine.emplace(lexemeType::RightRoundBracket);
+            magazine.emplace(Nonterminal::E);
+            magazine.emplace(lexemeType::LeftRoundBracket);
+            magazine.emplace(lexemeType::Write);
+
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Write);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            break;
+        }
+        case lexemeType::Allocate:
+        {
+            magazine.emplace(Nonterminal::Q);
+            magazine.emplace(lexemeType::Semicolon);
+            magazine.emplace(lexemeType::RightRoundBracket);
+            magazine.emplace(Nonterminal::E);
+            magazine.emplace(lexemeType::Comma);
+            magazine.emplace(lexemeType::VarName);
+            magazine.emplace(lexemeType::LeftRoundBracket);
+            magazine.emplace(lexemeType::Allocate);
+
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Memory); // буква m
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::VariableId);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            break;
+        }
+        default:
+        {
+            break;
+        }
+        }
+        break;
+    }
+    case Nonterminal::A:
+    {
+        switch (current_lexeme.lexeme_type)
+        {
+        case lexemeType::VarName:
+        {
+            magazine.emplace(lexemeType::Semicolon);
+            magazine.emplace(Nonterminal::E);
+            magazine.emplace(lexemeType::Assign);
+            magazine.emplace(Nonterminal::H);
+            magazine.emplace(lexemeType::VarName);
+
+            generator.emplace(GeneratorTask::Assign);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::VariableId);
+            break;
+        }
+        case lexemeType::If:
+        {
+            magazine.emplace(Nonterminal::Z);
+            magazine.emplace(Nonterminal::K);
+            magazine.emplace(lexemeType::RightBrace);
+            magazine.emplace(Nonterminal::Q);
+            magazine.emplace(Nonterminal::S);
+            magazine.emplace(lexemeType::LeftBrace);
+            magazine.emplace(lexemeType::RightRoundBracket);
+            magazine.emplace(Nonterminal::C);
+            magazine.emplace(lexemeType::LeftRoundBracket);
+            magazine.emplace(lexemeType::If);
+
+            generator.emplace(GeneratorTask::Task3);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Task1);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            break;
+        }
+        case lexemeType::While:
+        {
+            magazine.emplace(lexemeType::RightBrace);
+            magazine.emplace(Nonterminal::Q);
+            magazine.emplace(Nonterminal::S);
+            magazine.emplace(lexemeType::LeftBrace);
+            magazine.emplace(lexemeType::RightRoundBracket);
+            magazine.emplace(Nonterminal::C);
+            magazine.emplace(lexemeType::LeftRoundBracket);
+            magazine.emplace(lexemeType::While);
+
+            generator.emplace(GeneratorTask::Task5);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Task1);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Task4);
+            break;
+        }
+        case lexemeType::Read:
+        {
+            magazine.emplace(lexemeType::Semicolon);
+            magazine.emplace(lexemeType::RightRoundBracket);
+            magazine.emplace(Nonterminal::H);
+            magazine.emplace(lexemeType::VarName);
+            magazine.emplace(lexemeType::LeftRoundBracket);
+            magazine.emplace(lexemeType::Read);
+
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Read);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::VariableId);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            break;
+        }
+        case lexemeType::Write:
+        {
+            magazine.emplace(lexemeType::Semicolon);
+            magazine.emplace(lexemeType::RightRoundBracket);
+            magazine.emplace(Nonterminal::E);
+            magazine.emplace(lexemeType::LeftRoundBracket);
+            magazine.emplace(lexemeType::Write);
+
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Write);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            break;
+        }
+        case lexemeType::Allocate:
+        {
+            magazine.emplace(lexemeType::Semicolon);
+            magazine.emplace(lexemeType::RightRoundBracket);
+            magazine.emplace(Nonterminal::E);
+            magazine.emplace(lexemeType::Comma);
+            magazine.emplace(lexemeType::VarName);
+            magazine.emplace(lexemeType::LeftRoundBracket);
+            magazine.emplace(lexemeType::Allocate);
+
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Memory); // буква m
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::VariableId);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            break;
+        }
+        default:
+        {
+            //Ошибка если не нашлось нужного перехода по таблице
+            string msg = "Generator error - Unexpected lexeme;";
+            throw InterpretException(msg, current_lexeme.info);
+        }
+        }
+        break;
+    }
+    case Nonterminal::I:
+    {
+        switch (current_lexeme.lexeme_type)
+        {
+        case lexemeType::VarName:
+        {
+            magazine.emplace(Nonterminal::M);
+            magazine.emplace(lexemeType::VarName);
+
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Task8);
+            break;
+        }
+        default:
+        {
+            //Ошибка если не нашлось нужного перехода по таблице
+            string msg = "Generator error - Unexpected lexeme;";
+            throw InterpretException(msg, current_lexeme.info);
+        }
+        }
+        break;
+    }
+    case Nonterminal::M:
+    {
+        switch (current_lexeme.lexeme_type)
+        {
+        case lexemeType::Semicolon:
+        {
+            magazine.emplace(lexemeType::Semicolon);
+
+            generator.emplace(GeneratorTask::Empty);
+            break;
+        }
+        case lexemeType::Comma:
+        {
+            magazine.emplace(Nonterminal::M);
+            magazine.emplace(lexemeType::VarName);
+            magazine.emplace(lexemeType::Comma);
+
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Task8);
+            generator.emplace(GeneratorTask::Empty);
+            break;
+        }
+        default:
+        {
+            //Ошибка если не нашлось нужного перехода по таблице
+            string msg = "Generator error - Unexpected lexeme;";
+            throw InterpretException(msg, current_lexeme.info);
+        }
+        }
+        break;
+    }
+    case Nonterminal::H:
+    {
+        switch (current_lexeme.lexeme_type)
+        {
+        case lexemeType::LeftSquareBracket:
+        {
+            magazine.emplace(lexemeType::RightSquareBracket);
+            magazine.emplace(Nonterminal::E);
+            magazine.emplace(lexemeType::LeftSquareBracket);
+
+            generator.emplace(GeneratorTask::Index);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            break;
+        }
+        default:
+        {
+            break;
+        }
+        }
+        break;
+    }
+    case Nonterminal::C:
+    {
+        switch (current_lexeme.lexeme_type)
+        {
+        case lexemeType::VarName:
+        {
+            magazine.emplace(Nonterminal::L);
+            magazine.emplace(Nonterminal::U);
+            magazine.emplace(Nonterminal::V);
+            magazine.emplace(Nonterminal::H);
+            magazine.emplace(lexemeType::VarName);
+
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::VariableId);
+            break;
+        }
+        case lexemeType::IntNum:
+        {
+            magazine.emplace(Nonterminal::L);
+            magazine.emplace(Nonterminal::U);
+            magazine.emplace(Nonterminal::V);
+            magazine.emplace(lexemeType::IntNum);
+
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::IntNumber);
+            break;
+        }
+        case lexemeType::LeftRoundBracket:
+        {
+            magazine.emplace(Nonterminal::L);
+            magazine.emplace(Nonterminal::U);
+            magazine.emplace(Nonterminal::V);
+            magazine.emplace(lexemeType::RightRoundBracket);
+            magazine.emplace(Nonterminal::E);
+            magazine.emplace(lexemeType::LeftRoundBracket);
+
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            break;
+        }
+        case lexemeType::Plus:
+        {
+            magazine.emplace(Nonterminal::L);
+            magazine.emplace(Nonterminal::U);
+            magazine.emplace(Nonterminal::V);
+            magazine.emplace(Nonterminal::G);
+            magazine.emplace(lexemeType::Plus);
+
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            break;
+        }
+        case lexemeType::Minus:
+        {
+            magazine.emplace(Nonterminal::L);
+            magazine.emplace(Nonterminal::U);
+            magazine.emplace(Nonterminal::V);
+            magazine.emplace(Nonterminal::G);
+            magazine.emplace(lexemeType::Minus);
+
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::UnarMinus);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            break;
+        }
+        default:
+        {
+            //Ошибка если не нашлось нужного перехода по таблице
+            string msg = "Generator error - Unexpected lexeme;";
+            throw InterpretException(msg, current_lexeme.info);
+        }
+        }
+        break;
+    }
+    case Nonterminal::L:
+    {
+        switch (current_lexeme.lexeme_type)
+        {
+        case lexemeType::Less:
+        {
+            magazine.emplace(Nonterminal::Z);
+            magazine.emplace(Nonterminal::E);
+            magazine.emplace(lexemeType::Less);
+
+            generator.emplace(GeneratorTask::Less);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            break;
+        }
+        case lexemeType::More:
+        {
+            magazine.emplace(Nonterminal::Z);
+            magazine.emplace(Nonterminal::E);
+            magazine.emplace(lexemeType::More);
+
+            generator.emplace(GeneratorTask::More);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            break;
+        }
+        case lexemeType::Equal:
+        {
+            magazine.emplace(Nonterminal::Z);
+            magazine.emplace(Nonterminal::E);
+            magazine.emplace(lexemeType::Equal);
+
+            generator.emplace(GeneratorTask::Equal);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            break;
+        }
+        case lexemeType::LessOrEqual:
+        {
+            magazine.emplace(Nonterminal::Z);
+            magazine.emplace(Nonterminal::E);
+            magazine.emplace(lexemeType::LessOrEqual);
+
+            generator.emplace(GeneratorTask::LessOrEqual);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            break;
+        }
+        case lexemeType::MoreOrEqual:
+        {
+            magazine.emplace(Nonterminal::Z);
+            magazine.emplace(Nonterminal::E);
+            magazine.emplace(lexemeType::MoreOrEqual);
+
+            generator.emplace(GeneratorTask::MoreOrEqual);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            break;
+        }
+        case lexemeType::NotEqual:
+        {
+            magazine.emplace(Nonterminal::Z);
+            magazine.emplace(Nonterminal::E);
+            magazine.emplace(lexemeType::NotEqual);
+
+            generator.emplace(GeneratorTask::NotEqual);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            break;
+        }
+        default:
+        {
+            //Ошибка если не нашлось нужного перехода по таблице
+            string msg = "Generator error - Unexpected lexeme;";
+            throw InterpretException(msg, current_lexeme.info);
+        }
+        }
+        break;
+    }
+    case Nonterminal::K:
+    {
+        switch (current_lexeme.lexeme_type)
+        {
+        case lexemeType::Else:
+        {
+            magazine.emplace(lexemeType::RightBrace);
+            magazine.emplace(Nonterminal::Q);
+            magazine.emplace(Nonterminal::S);
+            magazine.emplace(lexemeType::LeftBrace);
+            magazine.emplace(lexemeType::Else);
+
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Task2);
+            break;
+        }
+        default:
+        {
+            break;
+        }
+        }
+        break;
+    }
+    case Nonterminal::E:
+    {
+        switch (current_lexeme.lexeme_type)
+        {
+        case lexemeType::VarName:
+        {
+            magazine.emplace(Nonterminal::U);
+            magazine.emplace(Nonterminal::V);
+            magazine.emplace(Nonterminal::H);
+            magazine.emplace(lexemeType::VarName);
+
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::VariableId);
+            break;
+        }
+        case lexemeType::IntNum:
+        {
+            magazine.emplace(Nonterminal::U);
+            magazine.emplace(Nonterminal::V);
+            magazine.emplace(lexemeType::IntNum);
+
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::IntNumber);
+            break;
+        }
+        case lexemeType::LeftRoundBracket:
+        {
+            magazine.emplace(Nonterminal::U);
+            magazine.emplace(Nonterminal::V);
+            magazine.emplace(lexemeType::RightRoundBracket);
+            magazine.emplace(Nonterminal::E);
+            magazine.emplace(lexemeType::LeftRoundBracket);
+
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            break;
+        }
+        case lexemeType::Plus:
+        {
+            magazine.emplace(Nonterminal::U);
+            magazine.emplace(Nonterminal::V);
+            magazine.emplace(Nonterminal::G);
+            magazine.emplace(lexemeType::Plus);
+
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            break;
+        }
+        case lexemeType::Minus:
+        {
+            magazine.emplace(Nonterminal::U);
+            magazine.emplace(Nonterminal::V);
+            magazine.emplace(Nonterminal::G);
+            magazine.emplace(lexemeType::Minus);
+
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::UnarMinus);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            break;
+        }
+        default:
+        {
+            //Ошибка если не нашлось нужного перехода по таблице
+            string msg = "Generator error - Unexpected lexeme;";
+            throw InterpretException(msg, current_lexeme.info);
+        }
+        }
+        break;
+    }
+    case Nonterminal::U:
+    {
+        switch (current_lexeme.lexeme_type)
+        {
+        case lexemeType::Plus:
+        {
+            magazine.emplace(Nonterminal::U);
+            magazine.emplace(Nonterminal::T);
+            magazine.emplace(lexemeType::Plus);
+
+            generator.emplace(GeneratorTask::Plus);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            break;
+        }
+        case lexemeType::Minus:
+        {
+            magazine.emplace(Nonterminal::U);
+            magazine.emplace(Nonterminal::T);
+            magazine.emplace(lexemeType::Minus);
+
+            generator.emplace(GeneratorTask::Minus);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            break;
+        }
+        default:
+        {
+            break;
+        }
+        }
+        break;
+    }
+    case Nonterminal::T:
+    {
+        switch (current_lexeme.lexeme_type)
+        {
+        case lexemeType::VarName:
+        {
+            magazine.emplace(Nonterminal::V);
+            magazine.emplace(Nonterminal::H);
+            magazine.emplace(lexemeType::VarName);
+
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::VariableId);
+            break;
+        }
+        case lexemeType::IntNum:
+        {
+            magazine.emplace(Nonterminal::V);
+            magazine.emplace(lexemeType::IntNum);
+
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::IntNumber);
+            break;
+        }
+        case lexemeType::LeftRoundBracket:
+        {
+            magazine.emplace(Nonterminal::V);
+            magazine.emplace(lexemeType::RightRoundBracket);
+            magazine.emplace(Nonterminal::E);
+            magazine.emplace(lexemeType::LeftRoundBracket);
+
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            break;
+        }
+        case lexemeType::Plus:
+        {
+            magazine.emplace(Nonterminal::V);
+            magazine.emplace(Nonterminal::G);
+            magazine.emplace(lexemeType::Plus);
+
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            break;
+        }
+        case lexemeType::Minus:
+        {
+            magazine.emplace(Nonterminal::V);
+            magazine.emplace(Nonterminal::G);
+            magazine.emplace(lexemeType::Minus);
+
+            generator.emplace(GeneratorTask::UnarMinus);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            break;
+        }
+        default:
+        {
+            //Ошибка если не нашлось нужного перехода по таблице
+            string msg = "Generator error - Unexpected lexeme;";
+            throw InterpretException(msg, current_lexeme.info);
+        }
+        }
+        break;
+    }
+    case Nonterminal::V:
+    {
+        switch (current_lexeme.lexeme_type)
+        {
+        case lexemeType::Multiply:
+        {
+            magazine.emplace(Nonterminal::V);
+            magazine.emplace(Nonterminal::F);
+            magazine.emplace(lexemeType::Multiply);
+
+            generator.emplace(GeneratorTask::Multiply);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            break;
+        }
+        case lexemeType::Divide:
+        {
+            magazine.emplace(Nonterminal::V);
+            magazine.emplace(Nonterminal::F);
+            magazine.emplace(lexemeType::Divide);
+
+            generator.emplace(GeneratorTask::Divide);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            break;
+        }
+        default:
+        {
+            break;
+        }
+        }
+        break;
+    }
+    case Nonterminal::F:
+    {
+        switch (current_lexeme.lexeme_type)
+        {
+        case lexemeType::VarName:
+        {
+            magazine.emplace(Nonterminal::H);
+            magazine.emplace(lexemeType::VarName);
+
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::VariableId);
+            break;
+        }
+        case lexemeType::IntNum:
+        {
+            magazine.emplace(lexemeType::IntNum);
+
+            generator.emplace(GeneratorTask::IntNumber);
+            break;
+        }
+        case lexemeType::LeftRoundBracket:
+        {
+            magazine.emplace(lexemeType::RightRoundBracket);
+            magazine.emplace(Nonterminal::E);
+            magazine.emplace(lexemeType::LeftRoundBracket);
+
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            break;
+        }
+        case lexemeType::Plus:
+        {
+            magazine.emplace(Nonterminal::G);
+            magazine.emplace(lexemeType::Plus);
+
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            break;
+        }
+        case lexemeType::Minus:
+        {
+            magazine.emplace(Nonterminal::Z);
+            magazine.emplace(Nonterminal::G);
+            magazine.emplace(lexemeType::Minus);
+
+            generator.emplace(GeneratorTask::UnarMinus);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            break;
+        }
+        default:
+        {
+            //Ошибка если не нашлось нужного перехода по таблице
+            string msg = "Generator error - Unexpected lexeme;";
+            throw InterpretException(msg, current_lexeme.info);
+        }
+        }
+        break;
+    }
+    case Nonterminal::G:
+    {
+        switch (current_lexeme.lexeme_type)
+        {
+        case lexemeType::VarName:
+        {
+            magazine.emplace(Nonterminal::H);
+            magazine.emplace(lexemeType::VarName);
+
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::VariableId);
+            break;
+        }
+        case lexemeType::IntNum:
+        {
+            magazine.emplace(lexemeType::IntNum);
+
+            generator.emplace(GeneratorTask::IntNumber);
+            break;
+        }
+        case lexemeType::LeftRoundBracket:
+        {
+            magazine.emplace(lexemeType::RightRoundBracket);
+            magazine.emplace(Nonterminal::E);
+            magazine.emplace(lexemeType::LeftRoundBracket);
+
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            generator.emplace(GeneratorTask::Empty);
+            break;
+        }
+        default:
+        {
+            //Ошибка если не нашлось нужного перехода по таблице
+            string msg = "Generator error - Unexpected lexeme;";
+            throw InterpretException(msg, current_lexeme.info);
+        }
+        }
+        break;
+    }
+    case Nonterminal::Z:
+    {
+        break;
+    }
+    case Nonterminal::Error:
+    default:
+        //Ошибка если в конце получили ошибочное состояние
+        string msg = "Generator error - Error or unknown state;";
+        throw InterpretException(msg, current_lexeme.info);
     }
 }
-
-
-//Считываем весь текст в массив строк  С, записать количество символов в каждой строке I[], количество строк J 
-// Создаем массив if while       read       write       array       int
-//создать массив, где 
-int main()
-{
-    setlocale(LC_ALL, "Russian");
-    /*  lexem L1(5, 1), L2(10, 3, &L1);        //создаем 2 объекта
-      lexem* L;
-      L = L1.p;
-      cout << L->TypeLex;*/
-
-      //============================Считываем программу с файла======================================
-    ifstream enter_file("text.txt");
-    string C, c;
-    char str[512];
-    int countLine = 0, allSymb = 0;
-    while (!enter_file.eof())
+//Выполнение действий
+void Generator::DoTask() {
+    switch (current_task)
     {
-        enter_file.getline(str, 512);
-        countLine++;
-    }
-    cout << countLine << endl << endl;
-    enter_file.seekg(0);
-    int* countSymb = new int[countLine];
-
-    int i = 0;
-
-    while (getline(enter_file, c))
+        //Ничего
+    case GeneratorTask::Empty:
+        break;
+        //Добавление в ОПС названия и типа переменной или массива
+    case GeneratorTask::VariableId:
     {
-        if (i > 0) { countSymb[i] = countSymb[i - 1]; }
-        C += c;
-        countSymb[i] += size(c);
-        allSymb += size(c);
-        //cout << c << "  " << countSymb[i] << endl;
-        i++;
-    }
-
-    //==================================Вызов фнкции лексического анализатора==============================
-    i = 0;
-    int j = 0;
-    lexem1 header, * p1, * p2, * head;
-
-    head = new lexem1;
-    p1 = head;
-    head->next = nullptr;
-    lexicalAnalyzer(C, i, *p1);
-    // cout << p1->type << " имя: " << p1->name << " значение: " << p1->value << endl;
-    header = *p1;
-
-    while (i < allSymb)
-    {
-        if (p1->type >= 0)
+        string name = current_lexeme.value;
+        if (data.int_table.count(name) ||
+            data.massInt_table.count(name))
         {
-            p1->next = new lexem1;
-            p1 = p1->next;
-            cout << p1->next;
-        }p1->next = nullptr;
-        lexicalAnalyzer(C, i, *p1);
-        // cout << p2->type << " имя: " << p2->name << " значение : " << p2->value << endl;
+            data.ops.emplace_back(name, OpsItemType::IntVariable, current_lexeme.info); //Добаляем в ОПС
+        }
+        else
+        {
+            string msg = "Generator error - Unknown variable name = '" + name + "';";
+            throw InterpretException(msg, current_lexeme.info);
+        }
 
+        break;
     }
-
-    p1 = head;
-    cout << p1->type << " имя: " << p1->name << " значение : " << p1->value << endl;
-    cout << p1->next;
-    while (p1->next != nullptr) {
-        p1 = p1->next;
-        cout << p1->type << " имя: " << p1->name << " значение : " << p1->value << endl;
+    //Добавление в ОПС значение переменной
+    case GeneratorTask::IntNumber:
+    {
+        int num = stoi(current_lexeme.value); //Преобразование типа (str -> int)
+        data.ops.emplace_back(num, current_lexeme.info); //Добавляем в ОПС
+        break;
     }
+    //Добавление в ОПС различных операций
+    case GeneratorTask::Read:
+        data.ops.emplace_back(OpsItemOperation::Read, current_lexeme.info);
+        break;
+    case GeneratorTask::Write:
+        data.ops.emplace_back(OpsItemOperation::Write, current_lexeme.info);
+        break;
+    case GeneratorTask::Plus:
+        data.ops.emplace_back(OpsItemOperation::Plus, current_lexeme.info);
+        break;
+    case GeneratorTask::Minus:
+        data.ops.emplace_back(OpsItemOperation::Minus, current_lexeme.info);
+        break;
+    case GeneratorTask::UnarMinus:
+        data.ops.emplace_back(OpsItemOperation::UnarMinus, current_lexeme.info);
+        break;
+    case GeneratorTask::Multiply:
+        data.ops.emplace_back(OpsItemOperation::Miltiply, current_lexeme.info);
+        break;
+    case GeneratorTask::Divide:
+        data.ops.emplace_back(OpsItemOperation::Divide, current_lexeme.info);
+        break;
+    case GeneratorTask::Less:
+        data.ops.emplace_back(OpsItemOperation::Less, current_lexeme.info);
+        break;
+    case GeneratorTask::Assign:
+        data.ops.emplace_back(OpsItemOperation::Assign, current_lexeme.info);
+        break;
+    case GeneratorTask::More:
+        data.ops.emplace_back(OpsItemOperation::More, current_lexeme.info);
+        break;
+    case GeneratorTask::Equal:
+        data.ops.emplace_back(OpsItemOperation::Equal, current_lexeme.info);
+        break;
+    case GeneratorTask::LessOrEqual:
+        data.ops.emplace_back(OpsItemOperation::LessOrEqual, current_lexeme.info);
+        break;
+    case GeneratorTask::MoreOrEqual:
+        data.ops.emplace_back(OpsItemOperation::MoreOrEqual, current_lexeme.info);
+        break;
+    case GeneratorTask::NotEqual:
+        data.ops.emplace_back(OpsItemOperation::NotEqual, current_lexeme.info);
+        break;
+    case GeneratorTask::Index:
+        data.ops.emplace_back(OpsItemOperation::Index, current_lexeme.info);
+        break;
+        //Переход если лож
+    case GeneratorTask::Task1:
+    {
+        marks.push(data.ops.size());
+        data.ops.emplace_back(0, current_lexeme.info);
+        data.ops.emplace_back(OpsItemOperation::JumpIfFalse, current_lexeme.info);
+        break;
+    }
+    //Переход
+    case GeneratorTask::Task2:
+    {
+        int place = marks.top(); marks.pop();
+        marks.push(data.ops.size());
+        data.ops.emplace_back(0, current_lexeme.info);
+        data.ops.emplace_back(OpsItemOperation::Jump, current_lexeme.info);
+        data.ops[place].int_num = data.ops.size();
+        break;
+    }
+    // ??
+    case GeneratorTask::Task3:
+    {
+        int place = marks.top(); marks.pop();
+        data.ops[place].int_num = data.ops.size();
+        break;
+    }
+    // ??
+    case GeneratorTask::Task4:
+    {
+        marks.push(data.ops.size());
+        break;
+    }
+    // ??
+    case GeneratorTask::Task5:
+    {
+        int place = marks.top(); marks.pop();
+        data.ops.emplace_back(marks.top(), current_lexeme.info); marks.pop();
+        data.ops.emplace_back(OpsItemOperation::Jump, current_lexeme.info);
+        data.ops[place].int_num = data.ops.size();
+        break;
+    }
+    //Выборка числа
+    case GeneratorTask::Task6:
+    {
+        current_table = table::Int;
+        break;
+    }
+    //Выборка массива
+    case GeneratorTask::Task7:
+    {
+        current_table = table::MassInt;
+        break;
+    }
+    //Обработка переменной или массива (внесение)
+    case GeneratorTask::Task8:
+    {
+        string name = current_lexeme.value;
 
-    /*
-    cout <<  endl;
-    cout <<  endl;
-    cout << header->type << endl;
-    header = header->next;
-    cout << header->type << endl;
-    header = header->next;
-    cout << header->type << endl;
-    header = header->next;
-    cout << header->type << endl;*/
+        if (data.int_table.count(name) ||
+            data.massInt_table.count(name)) {
+            string msg = "Generator error - Redefine a variable name = '" + name + "';";
+            throw InterpretException(msg, current_lexeme.info);
+        }
+        //Переменная
+        if (current_table == table::Int) {
+            data.int_table.insert({ name, 0 });
+        }
+        //Массив
+        else if (current_table == table::MassInt) {
+            data.massInt_table.insert({ name, vector<int>(0) });
+        }
 
+        break;
+    }
+    //Память ??
+    case GeneratorTask::Memory:
+    {
+        data.ops.emplace_back(OpsItemOperation::Memory, current_lexeme.info);
+        break;
+    }
+    //Если не подошел ни один кейс - ошибка
+    default: {
+        string msg = "Generator error - Unknown generator task;";
+        throw InterpretException(msg, current_lexeme.info);
+    }
+    }
+}
+//Работа генератора ОПС
+void Generator::Run() {
+    magazine.emplace(Nonterminal::S); //Изначально в магазине хранится S
+    generator.push(GeneratorTask::Empty); //Изначально задания для генератора отсутствуют
 
-    enter_file.close();
+    int current_lexeme_idx = 0; //Начинаем с первой лексемы
+    current_lexeme = input_data[current_lexeme_idx]; //Берем эту лексему
+    //Цикл работы генератора пока генератор и магазин полностью не опустеют
+    while (!generator.empty() && !magazine.empty())
+    {
+        // Берем верхний эл-т из стека магазина (и удаляем его от туда)
+        MagazineItem current_magazine_item = magazine.top(); magazine.pop();
+        current_nonterminal = current_magazine_item.nonterminal;
+        // Берем верхний эл-т из стека заданий (и удаляем его от туда)
+        current_task = generator.top(); generator.pop();
 
-    ///////////////////////////////////////////////////////////////для генератора
-    pattern a;
-    pattern* b;
-    pattern* c;
-    fillInMagazin();
-    fillInGenerator();
-
-    /// //
-
-    int condition = 0;
-    //в генератор 2 кубика, в магазин начальное состояние 
-    pattern* p1m, * p2m, * p1g, * p2g;
-    p1m = new pattern;
-    p1m->type = 39;        //a
-    p2m = new pattern;
-    p2m->type = 26;        //квадратик
-    p2m->prev = p1m;
-    p1m = p2m;
-
-    p1g = new pattern;
-    p1g->type = 0;        //a
-    p2g = new pattern;
-    p2g->type = 0;        //квадратик
-    p2g->prev = p1g;
-    p1g = p2g;
-
-    lexem1* header1, * next;
-    header1 = new lexem1;
-    header1->type = 0;
-    next = new lexem1;
-    header1->next = next;
-    next->type = 1;
-
-    pattern* mag1, * gen1, * gen2;
-    int k = 0;
-    while (k != 1) {
-        pattern mag;
-        lexem1 input;
-        mag = *p2m;
-        //delete p2m;
-        p2m = p2m->prev;
-        p1m = p1m->prev;
-        input = *header1;
-        //header = header->next;
-        if (input.type != mag.type) {
-            p2m = p1m;
-            p1m = new pattern;
-            mag1 = &magazin[mag.type - 26][input.type];
-            p1m = mag1;
-            p1m->prev = p2m;
-            while (mag1->prev != nullptr) {
-                mag1 = mag1->prev;
-                p2m = p1m;
-                p1m = new pattern;
-                p1m = mag1;
-                p1m->prev = p2m;
+        DoTask();
+        //Если мы получили лексему:
+        if (current_magazine_item.is_lexeme) {
+            //Не выполнили ли мы все?
+            if (current_lexeme.lexeme_type == lexemeType::Finish) {
+                string msg = "Generator error - All lexemes are read, but magazine is not empty;";
+                throw InterpretException(msg, current_lexeme.info);
             }
-            p2g = p1g;
-            p1g = new pattern;
-            gen1 = &generator[mag.type - 26][input.type];
-            p1g = gen1;
-            p1g->prev = p2g;
-            while (gen1->prev != nullptr) {
-                gen1 = gen1->prev;
-                p2g = p1g;
-                p1g = new pattern;
-                p1g = gen1;
-                p1g->prev = p2g;
+            //Передвижения индекса для последущих переводов в ОПС, если мы получили готовую лексему,
+            // с которой ничего не нужно делать
+            if (current_magazine_item.lexeme == current_lexeme.lexeme_type) {
+                current_lexeme_idx++;
+                current_lexeme = input_data[current_lexeme_idx];
+            }
+            //Ошибка в ином случае
+            else {
+                string msg = "Generator error - Unexpected lexeme;";
+                throw InterpretException(msg, current_lexeme.info);
             }
         }
+        //Если из магазина мы получили не лексему - распонаем не терминал
         else {
-            header1 = header1->next;
+            RecognizeNonterminal();
         }
-        //убрать один элемент из генератора 
-        p2g = p2g->prev;
-        p1g = p1g->prev;
-        k++;
     }
-
-    ///////////////////////////////////////////////////////////////////////////для интерпретатора
-    read.open("hello.txt");
-    //ops_list ourOPS; // Динамический список
-    //constr_list(ourOPS);
-    for (int i = 0; i < 2; i++) {
-        M[i] = new pattern;
-        Magazin[i] = new pattern;
+    //Ошибка, если остались нераспознанные лексемы
+    if (current_lexeme.lexeme_type != lexemeType::Finish) {
+        string msg = "Generator error - There are unrecognized lexemes;";
+        throw InterpretException(msg, current_lexeme.info);
     }
-    Metka[0] = 5;
-    Metka[1] = 1;
-    S[0] = 1;
-    S[1] = 2;
-    /*
-    //a
-    M[0]->type = 20;
-    M[0]->value = 3;
-    M[0]->nom = 0;
-    //b
-    M[1]->type = 20;
-    M[1]->value = 2;
-    M[1]->nom = 1;
-    //=
-    M[2]->type = 3;
-    M[2]->value = -100;
-    M[2]->nom = -100;
-    //a
-    M[3]->type = 20;
-    M[3]->value = 3;
-    M[3]->nom = 0;
-    //a
-    M[4]->type = 20;
-    M[4]->value = 3;
-    M[4]->nom = 0;
-    //2
-    M[5]->type = 21;
-    M[5]->value = 2;
-    M[5]->nom = -1;
-    ////-'
-    //M[4]->type = 13;
-    //M[4]->value = -100;
-    //M[4]->nom = -100;
-    ////+
-    //M[5]->type = 12;
-    //M[5]->value = -100;
-    //M[5]->nom = -100;
-    //+
-    M[6]->type = 9;
-    M[6]->value = -100;
-    M[6]->nom = -100;
-    //=
-    M[7]->type = 3;
-    M[7]->value = -100;
-    M[7]->nom = -100;*/
-    /*
-    //a
-    M[0]->type = 20;
-    M[0]->value = 3;
-    M[0]->nom = 0;
-    //b
-    M[1]->type = 20;
-    M[1]->value = 4;
-    M[1]->nom = 1;
-    //>
-    M[2]->type = 15;
-    M[2]->value = -100;
-    M[2]->nom = -100;
-    //m1
-    M[3]->type = 22;
-    M[3]->value = 5;
-    M[3]->nom = 0;
-    //jf
-    M[4]->type = 8;
-    M[4]->value = -1;
-    M[4]->nom = -1;
-    //a
-    M[5]->type = 20;
-    M[5]->value = 3;
-    M[5]->nom = 0;
-    //b
-    M[6]->type = 20;
-    M[6]->value = 4;
-    M[6]->nom = 1;
-    //=
-    M[7]->type = 3;
-    M[7]->value = -100;
-    M[7]->nom = -100;
-    //m2
-    M[8]->type = 22;
-    M[8]->value = 1;
-    M[8]->nom = 1;
-    //j
-    M[9]->type = 7;
-    M[9]->value = -1;
-    M[9]->nom = -1;*/
-    /*
-    //a
-    M[0]->type = 20;
-    M[0]->value = 1;
-    M[0]->nom = 0;
-    //b
-    M[1]->type = 20;
-    M[1]->value = 2;
-    M[1]->nom = 1;
-    //<
-    M[2]->type = 14;
-    M[2]->value = -100;
-    M[2]->nom = -100;
-    //m1
-    M[3]->type = 22;
-    M[3]->value = 9;
-    M[3]->nom = 0;
-    //jf
-    M[4]->type = 8;
-    M[4]->value = -1;
-    M[4]->nom = -1;
-    //a
-    M[5]->type = 20;
-    M[5]->value = 1;
-    M[5]->nom = 0;
-    //a
-    M[6]->type = 20;
-    M[6]->value = 1;
-    M[6]->nom = 0;
-    //b
-    M[7]->type = 20;
-    M[7]->value = 2;
-    M[7]->nom = 1;
-    //2
-    M[8]->type = 21;
-    M[8]->value = 2;
-    M[8]->nom = -1;
-    //:
-    M[9]->type = 12;
-    M[9]->value = -100;
-    M[9]->nom = -100;
-    //+
-    M[10]->type = 9;
-    M[10]->value = -100;
-    M[10]->nom = -100;
-    //=
-    M[11]->type = 3;
-    M[11]->value = -100;
-    M[11]->nom = -100;
-    //m2
-    M[12]->type = 22;
-    M[12]->value = 1;
-    M[12]->nom = 1;
-    //j
-    M[13]->type = 7;
-    M[13]->value = -1;
-    M[13]->nom = -1;*/
-    ////a
-    //M[0]->type = 20;
-    //M[0]->value = -1;
-    //M[0]->nom = 0;
-    ////r
-    //M[1]->type = 4;
-    //M[1]->value = -1;
-    //M[1]->nom = -1;
-
-
-    justdoit();
-    //cout << S[0];
 }
+//Гетер итоговых данных
+InterpretData Generator::GetData() {
+    return data;
+}
+//Сеттер лексем в виде входных данных
+Generator::Generator(vector<lexeme> lexemes) {
+    input_data = lexemes;
+}
+
+
